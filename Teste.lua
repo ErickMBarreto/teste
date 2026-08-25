@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (POSIÇÃO DEITADA SEGURA & FULL)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FIX DEITAR REAL & NAS COSTAS DEFINITIVO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -28,7 +28,7 @@ for _, gui in ipairs({CoreGui, Players.LocalPlayer and Players.LocalPlayer:FindF
     end
 end
 
-local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/Scripts/refs/heads/main/Loader.lua"
+local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/teste/refs/heads/main/Teste.lua"
 local function queueNextExecution()
     local queueFunc = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport
     if queueFunc then
@@ -144,11 +144,12 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA APRIMORADA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
 local flightStabilizer = nil
+local originalRootJointC0 = nil
 
 function CharacterModule.Get()
     local char = player.Character
@@ -156,6 +157,29 @@ function CharacterModule.Get()
         return char, char.HumanoidRootPart, char.Humanoid
     end
     return nil, nil, nil
+end
+
+local function getRootJoint()
+    local char = player.Character
+    if not char then return nil end
+    local rootPart = char:FindFirstChild("HumanoidRootPart")
+    if not rootPart then return nil end
+    return rootPart:FindFirstChild("RootJoint") or char:FindFirstChild("RootJoint", true)
+end
+
+local function setLayingDown(lay)
+    local rj = getRootJoint()
+    if not rj then return end
+    if not originalRootJointC0 then
+        originalRootJointC0 = rj.C0
+    end
+
+    if lay then
+        -- Gira o torso 90 graus para frente (posição horizontal de bruços)
+        rj.C0 = originalRootJointC0 * CFrame.Angles(math.rad(-90), 0, 0)
+    else
+        rj.C0 = originalRootJointC0
+    end
 end
 
 local function cleanFlightBodies(root)
@@ -171,7 +195,7 @@ local function getFlightBody(root)
     if not bv then
         bv = Instance.new("BodyVelocity")
         bv.Name = "HubFlightForce"
-        bv.MaxForce = Vector3.new(4e4, 4e4, 4e4)
+        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
         bv.Velocity = Vector3.zero
         bv.Parent = root
     end
@@ -180,8 +204,8 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        bg.MaxTorque = Vector3.new(4e4, 4e4, 4e4)
-        bg.P = 8000
+        bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+        bg.P = 10000
         bg.Parent = root
     end
 
@@ -195,6 +219,7 @@ function CharacterModule.StopMovement()
     end
     SharedState.CurrentTargetPos = nil
     
+    setLayingDown(false)
     local _, root = CharacterModule.Get()
     if root then
         cleanFlightBodies(root)
@@ -211,17 +236,18 @@ function CharacterModule.ApplyPhysicsStabilizers(char)
         hum:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
         hum:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false)
     end
-    local root = char:FindFirstChild("HumanoidRootPart")
-    if root then
-        root.CanCollide = false
-    end
 end
 
 flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
-        local _, root, hum = CharacterModule.Get()
-        if root and hum and hum.Health > 0 then
+        local char, root, hum = CharacterModule.Get()
+        if char and root and hum and hum.Health > 0 then
             root.AssemblyAngularVelocity = Vector3.zero
+            for _, part in ipairs(char:GetChildren()) do
+                if part:IsA("BasePart") and part.CanCollide then
+                    part.CanCollide = false
+                end
+            end
         end
     end
 end)
@@ -248,17 +274,24 @@ function CharacterModule.FlyToEnemy(targetPart)
     local targetPos, targetGyroCFrame
 
     if mode == "Em Cima da Cabeça" then
+        setLayingDown(true)
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        -- Inclina 90 graus no eixo X via BodyGyro (deita de bruços olhando para o monstro com segurança)
-        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos) * CFrame.Angles(math.rad(-90), 0, 0)
+        targetGyroCFrame = CFrame.lookAt(root.Position, Vector3.new(enemyPos.X, root.Position.Y, enemyPos.Z))
     elseif mode == "Nas Costas" then
-        local lookVec = targetPart.CFrame.LookVector
-        local flatLook = Vector3.new(lookVec.X, 0, lookVec.Z)
-        if flatLook.Magnitude > 0.05 then flatLook = flatLook.Unit else flatLook = Vector3.new(0, 0, 1) end
+        setLayingDown(false)
+        -- Calcula o ponto exatamente nas costas usando a rotação do monstro com elevação estável
+        local enemyLook = targetPart.CFrame.LookVector
+        local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
+        if flatLook.Magnitude > 0.05 then
+            flatLook = flatLook.Unit
+        else
+            flatLook = Vector3.new(0, 0, 1)
+        end
         
-        targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 3.5, 0)
-        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 1.5, 0))
+        targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
+        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 1.2, 0))
     else
+        setLayingDown(false)
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
         targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos)
     end
@@ -269,12 +302,11 @@ function CharacterModule.FlyToEnemy(targetPart)
 
     bg.CFrame = targetGyroCFrame
 
-    if dist <= 1.5 then
-        -- Mantém a sustentação estável na altitude exata
+    if dist <= 1.0 then
         bv.Velocity = Vector3.new(0, 0.05, 0)
     else
-        local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 20, 90)
-        bv.Velocity = diff.Unit * math.min(dist * 7, speed)
+        local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 25, 90)
+        bv.Velocity = diff.Unit * math.clamp(dist * 9, 20, speed)
     end
 end
 
@@ -283,6 +315,7 @@ function CharacterModule.FlyToPortal(targetCFrame)
     local _, root = CharacterModule.Get()
     if not root or not root.Parent then return end
 
+    setLayingDown(false)
     cleanFlightBodies(root)
 
     local targetPos = targetCFrame.Position
@@ -687,7 +720,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL & SEGUNDO PLANO) ]]
+-- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL) ]]
 local QuestModule = {}
 local lastQuestTick = 0
 
