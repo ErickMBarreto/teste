@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA & ORIENTAÇÃO FIXA NO ALVO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA FIXA NO ALVO CORRIGIDA)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -79,6 +79,7 @@ local SharedState = {
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
+    CurrentLookAtPos = nil,
     LastPortalAttempt = 0,
     DetectedWeapon = nil
 }
@@ -181,8 +182,8 @@ local function getFlightBody(root)
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
         bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        bg.P = 12000
-        bg.D = 400
+        bg.P = 15000
+        bg.D = 300
         bg.Parent = root
     end
 
@@ -195,6 +196,7 @@ function CharacterModule.StopMovement()
         SharedState.CurrentTween = nil
     end
     SharedState.CurrentTargetPos = nil
+    SharedState.CurrentLookAtPos = nil
     
     local _, root, hum = CharacterModule.Get()
     if hum then
@@ -221,11 +223,16 @@ flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
         local char, root, hum = CharacterModule.Get()
         if char and root and hum and hum.Health > 0 then
-            root.AssemblyAngularVelocity = Vector3.zero
+            -- Noclip contínuo
             for _, part in ipairs(char:GetChildren()) do
                 if part:IsA("BasePart") and part.CanCollide then
                     part.CanCollide = false
                 end
+            end
+
+            -- Trava e alinha a mira frame a frame no CFrame do personagem
+            if SharedState.CurrentLookAtPos then
+                root.CFrame = CFrame.lookAt(root.Position, SharedState.CurrentLookAtPos)
             end
         end
     end
@@ -249,7 +256,6 @@ function CharacterModule.FlyToEnemy(targetPart)
         return
     end
 
-    -- Desativa o auto-rotate do Humanoid para que o BodyGyro mantenha a mira 100% no inimigo
     if hum.AutoRotate then
         hum.AutoRotate = false
     end
@@ -259,8 +265,8 @@ function CharacterModule.FlyToEnemy(targetPart)
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        -- Aponta diretamente para o centro do inimigo (visão inclinada para baixo)
-        lookAtPos = enemyPos
+        -- Offset sutil para evitar singularidade de eixo ao olhar 100% para baixo
+        lookAtPos = Vector3.new(enemyPos.X + 0.001, enemyPos.Y, enemyPos.Z + 0.001)
     elseif mode == "Nas Costas" then
         local enemyLook = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
@@ -271,18 +277,18 @@ function CharacterModule.FlyToEnemy(targetPart)
         end
         
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
-        -- Olhando direto para as costas/tronco do mob
         lookAtPos = enemyPos + Vector3.new(0, 1.2, 0)
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
         lookAtPos = enemyPos
     end
 
+    SharedState.CurrentLookAtPos = lookAtPos
+
     local bv, bg = getFlightBody(root)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    -- Mira direta fixa no inimigo
     bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
 
     if dist <= 1.2 then
@@ -298,6 +304,7 @@ function CharacterModule.FlyToPortal(targetCFrame)
     local _, root, hum = CharacterModule.Get()
     if not root or not root.Parent then return end
 
+    SharedState.CurrentLookAtPos = nil
     if hum then
         hum.AutoRotate = true
     end
