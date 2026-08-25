@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-QUEST PRECISO & DESACOPLADO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO WEAPON DETECTION & FULL INTEGRATION)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -79,7 +79,8 @@ local SharedState = {
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
-    LastPortalAttempt = 0
+    LastPortalAttempt = 0,
+    DetectedWeapon = nil
 }
 
 -- [[ 2. CONFIGURAÇÕES ]]
@@ -87,7 +88,7 @@ local ConfigModule = {}
 ConfigModule.Settings = {
     SelectedPhase = "One Piece",
     PositionMode = "Em Cima da Cabeça",
-    CustomWeaponName = "VoidRods",
+    CustomWeaponName = "", -- Deixe vazio para Auto-Detect automático
     AutoFarm = true,
     AutoAttack = true,
     AutoSkills = true,
@@ -102,7 +103,7 @@ ConfigModule.Settings = {
     BackDistance = 6.0,
     TweenSpeed = 48,
     AttackSpeed = 0.15,
-    -- Configurações de Quests
+    -- Configurações Quests
     AutoClaimQuests = true,
     ClaimDelaySeconds = 8,
     -- Configurações Auto-Sell & Auto-Favorite
@@ -408,40 +409,67 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 5. MÓDULO DE COMBATE ]]
+-- [[ 5. MÓDULO DE COMBATE & AUTO-DETECÇÃO DE ARMA ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local lastSkillUse = 0
 local comboIndex = 1
+local lastDetectTick = 0
 
-function CombatModule.DetectWeapon()
-    local pguiRef = player:FindFirstChild("PlayerGui")
-    if pguiRef then
-        for _, desc in ipairs(pguiRef:GetDescendants()) do
-            if (desc:IsA("TextLabel") or desc:IsA("TextButton")) and desc.Visible then
-                local txt = desc.Text:lower()
-                if txt:find("unequip") or txt:find("desequipar") or txt:find("equipped") then
-                    local parentSlot = desc:FindFirstAncestorWhichIsA("Frame") or desc:FindFirstAncestorWhichIsA("ImageLabel") or desc.Parent
-                    if parentSlot and parentSlot.Name ~= "Items" and parentSlot.Name ~= "Scroll" then
-                        return parentSlot.Name
+function CombatModule.DetectEquippedWeapon()
+    -- 1. Varredura direta no inventário mapeado
+    local scroll = pgui:FindFirstChild("Main")
+        and pgui.Main:FindFirstChild("MainFrame")
+        and pgui.Main.MainFrame:FindFirstChild("Items")
+        and pgui.Main.MainFrame.Items:FindFirstChild("Scroll")
+
+    if scroll then
+        for _, slot in ipairs(scroll:GetChildren()) do
+            if (slot:IsA("ImageButton") or slot:IsA("Frame")) and slot:FindFirstChild("Item") and slot.Item:IsA("ObjectValue") then
+                local itemObj = slot.Item.Value
+                if itemObj and itemObj.Parent then
+                    local isEquipped = itemObj:GetAttribute("Equipped") == true
+                    local itemType = tostring(itemObj:GetAttribute("Type") or ""):lower()
+                    
+                    local eqVisual = slot:FindFirstChild("EquippedSelection")
+                    local isVisuallyEquipped = eqVisual and eqVisual:IsA("GuiObject") and eqVisual.Visible
+
+                    if (isEquipped or isVisuallyEquipped) and (itemType == "weapon" or not itemType:find("armor")) then
+                        return itemObj.Name
                     end
                 end
             end
         end
     end
 
+    -- 2. Fallback pelo Character / Backpack
     local char = player.Character
-    if char and char:FindFirstChildOfClass("Tool") then return char:FindFirstChildOfClass("Tool").Name end
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then return tool.Name end
+    end
+
     local bp = player:FindFirstChild("Backpack")
-    if bp and bp:FindFirstChildOfClass("Tool") then return bp:FindFirstChildOfClass("Tool").Name end
-    return nil
+    if bp then
+        local tool = bp:FindFirstChildOfClass("Tool")
+        if tool then return tool.Name end
+    end
+
+    return "VoidRods"
 end
 
 function CombatModule.GetEffectiveWeapon()
     if ConfigModule.Settings.CustomWeaponName and ConfigModule.Settings.CustomWeaponName ~= "" then
         return ConfigModule.Settings.CustomWeaponName
     end
-    return CombatModule.DetectWeapon() or "VoidRods"
+
+    -- Atualiza detecção a cada 3 segundos em segundo plano
+    if not SharedState.DetectedWeapon or (tick() - lastDetectTick) > 3.0 then
+        lastDetectTick = tick()
+        SharedState.DetectedWeapon = CombatModule.DetectEquippedWeapon()
+    end
+
+    return SharedState.DetectedWeapon or "VoidRods"
 end
 
 function CombatModule.GetHotbar()
@@ -641,7 +669,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE QUESTS (REDUÇÃO E RESGATE ESTRITO) ]]
+-- [[ 7. MÓDULO DE QUESTS ]]
 local QuestModule = {}
 local questRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Quest", 10)
 local lastQuestTick = 0
@@ -685,14 +713,10 @@ function QuestModule.ClaimAll()
                     if progressLabel and progressLabel:IsA("TextLabel") then
                         local txt = progressLabel.Text:lower()
                         if txt == "claim" or txt == "resgatar" or txt == "completed" then
-                            -- Seleciona a quest
                             CharacterModule.TriggerButton(slot)
                             task.wait(0.08)
-
-                            -- Clica no botão de Claim principal da UI
                             CharacterModule.TriggerButton(claimBtn)
 
-                            -- Disparo no Remote oficial com fallback do SelectedQuest
                             if questRemote then
                                 pcall(function()
                                     local selObj = slot:FindFirstChild("SelectedQuest")
@@ -1051,7 +1075,6 @@ task.spawn(function()
         if ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then
-                -- Agendamentos desacoplados por partida
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
                     
@@ -1236,25 +1259,23 @@ PhaseSection:AddDropdown("PositionModeSelector", {
 
 local WeaponSection = Tabs.Farm:AddSection("Configuração de Arma")
 local WeaponInput = WeaponSection:AddInput("WeaponInputBox", {
-    Title = "Arma Equipada / Nome",
+    Title = "Arma Equipada (Deixe vazio para Auto-Detect)",
     Default = ConfigModule.Settings.CustomWeaponName,
-    Placeholder = "Ex: VoidRods, Katana...",
+    Placeholder = "Auto-Detect Ativo...",
     Finished = true,
     Callback = function(Value) ConfigModule.Settings.CustomWeaponName = Value ConfigModule.Save() end
 })
 
 WeaponSection:AddButton({
-    Title = "🔍 Detectar Arma da Mão",
-    Description = "Lê automaticamente o nome da arma equipada",
+    Title = "🔍 Detectar Arma Agora",
+    Description = "Lê e exibe o nome da arma equipada no momento",
     Callback = function()
-        local detected = CombatModule.DetectWeapon()
+        local detected = CombatModule.DetectEquippedWeapon()
         if detected and detected ~= "" then
-            ConfigModule.Settings.CustomWeaponName = detected
-            WeaponInput:SetValue(detected)
-            ConfigModule.Save()
-            Fluent:Notify({ Title = "Arma Detectada", Content = "Identificada: " .. tostring(detected), Duration = 4 })
+            SharedState.DetectedWeapon = detected
+            Fluent:Notify({ Title = "Arma Detectada", Content = "Equipada: " .. tostring(detected), Duration = 4 })
         else
-            Fluent:Notify({ Title = "Não Encontrada", Content = "Digite o nome exato da arma.", Duration = 4 })
+            Fluent:Notify({ Title = "Não Encontrada", Content = "Nenhuma arma identificada.", Duration = 4 })
         end
     end
 })
