@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MOVIMENTAÇÃO FLUIDA & ANTI-CONGELAMENTO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (POSIÇÃO DEITADA SEGURA & FULL)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -28,7 +28,7 @@ for _, gui in ipairs({CoreGui, Players.LocalPlayer and Players.LocalPlayer:FindF
     end
 end
 
-local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/teste/refs/heads/main/Teste.lua"
+local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/Scripts/refs/heads/main/Loader.lua"
 local function queueNextExecution()
     local queueFunc = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport
     if queueFunc then
@@ -144,7 +144,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA DINÂMICA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -245,31 +245,32 @@ function CharacterModule.FlyToEnemy(targetPart)
     end
 
     local mode = ConfigModule.Settings.PositionMode
-    local targetPos, lookAtPos
+    local targetPos, targetGyroCFrame
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        lookAtPos = enemyPos
+        -- Inclina 90 graus no eixo X via BodyGyro (deita de bruços olhando para o monstro com segurança)
+        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos) * CFrame.Angles(math.rad(-90), 0, 0)
     elseif mode == "Nas Costas" then
         local lookVec = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(lookVec.X, 0, lookVec.Z)
         if flatLook.Magnitude > 0.05 then flatLook = flatLook.Unit else flatLook = Vector3.new(0, 0, 1) end
         
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 3.5, 0)
-        lookAtPos = enemyPos + Vector3.new(0, 1.5, 0)
+        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 1.5, 0))
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        lookAtPos = enemyPos
+        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos)
     end
 
     local bv, bg = getFlightBody(root)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
+    bg.CFrame = targetGyroCFrame
 
     if dist <= 1.5 then
-        -- Segura a altitude suavemente sem congelar o personagem para sempre
+        -- Mantém a sustentação estável na altitude exata
         bv.Velocity = Vector3.new(0, 0.05, 0)
     else
         local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 20, 90)
@@ -282,7 +283,6 @@ function CharacterModule.FlyToPortal(targetCFrame)
     local _, root = CharacterModule.Get()
     if not root or not root.Parent then return end
 
-    -- Remove o BodyVelocity para o Tween do portal assumir sem conflito
     cleanFlightBodies(root)
 
     local targetPos = targetCFrame.Position
@@ -687,7 +687,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL) ]]
+-- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL & SEGUNDO PLANO) ]]
 local QuestModule = {}
 local lastQuestTick = 0
 
