@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-QUEST SILENCIOSO & COMPLETO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (VERSÃO COMPLETA & ESTÁVEL)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -144,7 +144,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -158,14 +158,41 @@ function CharacterModule.Get()
     return nil, nil, nil
 end
 
+local function getFlightBody(root)
+    local bv = root:FindFirstChild("HubFlightForce")
+    if not bv then
+        bv = Instance.new("BodyVelocity")
+        bv.Name = "HubFlightForce"
+        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        bv.Velocity = Vector3.zero
+        bv.Parent = root
+    end
+
+    local bg = root:FindFirstChild("HubFlightGyro")
+    if not bg then
+        bg = Instance.new("BodyGyro")
+        bg.Name = "HubFlightGyro"
+        bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+        bg.P = 10000
+        bg.Parent = root
+    end
+
+    return bv, bg
+end
+
 function CharacterModule.StopMovement()
     if SharedState.CurrentTween then
         SharedState.CurrentTween:Cancel()
         SharedState.CurrentTween = nil
     end
     SharedState.CurrentTargetPos = nil
+    
     local _, root = CharacterModule.Get()
-    if root and root.Parent then
+    if root then
+        local bv = root:FindFirstChild("HubFlightForce")
+        if bv then bv:Destroy() end
+        local bg = root:FindFirstChild("HubFlightGyro")
+        if bg then bg:Destroy() end
         root.AssemblyLinearVelocity = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
     end
@@ -189,45 +216,22 @@ flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
         local _, root, hum = CharacterModule.Get()
         if root and hum and hum.Health > 0 then
-            if not SharedState.CurrentTween then
-                root.AssemblyLinearVelocity = Vector3.new(0, 0.05, 0)
-                root.AssemblyAngularVelocity = Vector3.zero
-            else
-                root.AssemblyAngularVelocity = Vector3.zero
-            end
+            root.AssemblyAngularVelocity = Vector3.zero
         end
     end
 end)
 
-function CharacterModule.GetSafeCFrame(targetPosition, lookAtPosition)
-    local char = player.Character
-    local rayOrigin = targetPosition + Vector3.new(0, 20, 0)
-    local rayDirection = Vector3.new(0, -50, 0)
-    
-    local params = RaycastParams.new()
-    params.FilterType = Enum.RaycastFilterType.Exclude
-    if char then
-        params.FilterDescendantsInstances = {char}
-    end
-    
-    local hit = workspace:Raycast(rayOrigin, rayDirection, params)
-    local safeY = targetPosition.Y
-
-    if hit then
-        local floorY = hit.Position.Y
-        if safeY < (floorY + 3.5) then
-            safeY = floorY + 3.5
-        end
-    end
-
-    local safePos = Vector3.new(targetPosition.X, safeY, targetPosition.Z)
-    return CFrame.new(safePos, lookAtPosition)
-end
-
 function CharacterModule.FlyToEnemy(targetPart)
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then 
+        CharacterModule.StopMovement()
+        return 
+    end
+    
     local _, root = CharacterModule.Get()
-    if not root or not targetPart or not targetPart.Parent then return end
+    if not root or not targetPart or not targetPart.Parent then 
+        CharacterModule.StopMovement()
+        return 
+    end
 
     local enemyPos = targetPart.Position
     if enemyPos.Magnitude > 20000 or enemyPos.Y > 500 or enemyPos.Y < -800 then
@@ -236,43 +240,35 @@ function CharacterModule.FlyToEnemy(targetPart)
     end
 
     local mode = ConfigModule.Settings.PositionMode
-    local targetCFrame
+    local targetPos, lookAtPos
 
     if mode == "Em Cima da Cabeça" then
-        local abovePos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0.1)
-        targetCFrame = CFrame.lookAt(abovePos, enemyPos)
+        targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
+        lookAtPos = enemyPos
     elseif mode == "Nas Costas" then
         local lookVec = targetPart.CFrame.LookVector
-        if lookVec.Magnitude > 0.1 then
-            local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 2.5, 0)
-            local backPos = enemyPos + backOffset
-            targetCFrame = CFrame.lookAt(backPos, enemyPos)
-        else
-            targetCFrame = CFrame.lookAt(enemyPos + Vector3.new(0, 5, 5), enemyPos)
-        end
+        local flatLook = Vector3.new(lookVec.X, 0, lookVec.Z)
+        if flatLook.Magnitude > 0.05 then flatLook = flatLook.Unit else flatLook = Vector3.new(0, 0, 1) end
+        
+        targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 3.5, 0)
+        lookAtPos = enemyPos + Vector3.new(0, 1.5, 0)
     else
-        local abovePos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        targetCFrame = CharacterModule.GetSafeCFrame(abovePos, enemyPos)
+        targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
+        lookAtPos = enemyPos
     end
 
-    local targetPos = targetCFrame.Position
-    local distance = (root.Position - targetPos).Magnitude
+    local bv, bg = getFlightBody(root)
+    local diff = targetPos - root.Position
+    local dist = diff.Magnitude
 
-    if distance <= 1.2 then return end
+    bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
 
-    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.8 and SharedState.CurrentTween then
-        return
+    if dist <= 1.2 then
+        bv.Velocity = Vector3.zero
+    else
+        local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 20, 90)
+        bv.Velocity = diff.Unit * math.min(dist * 6, speed)
     end
-
-    SharedState.CurrentTargetPos = targetPos
-    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.08, 3.5)
-
-    if SharedState.CurrentTween then 
-        SharedState.CurrentTween:Cancel() 
-    end
-
-    SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
-    SharedState.CurrentTween:Play()
 end
 
 function CharacterModule.FlyToPortal(targetCFrame)
