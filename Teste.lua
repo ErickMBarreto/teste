@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (COMBATE & MOVIMENTAÇÃO LIMPOS)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA & ORIENTAÇÃO FIXA NO ALVO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -144,7 +144,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA LIMPA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA DE MIRA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -181,7 +181,8 @@ local function getFlightBody(root)
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
         bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        bg.P = 10000
+        bg.P = 12000
+        bg.D = 400
         bg.Parent = root
     end
 
@@ -195,7 +196,10 @@ function CharacterModule.StopMovement()
     end
     SharedState.CurrentTargetPos = nil
     
-    local _, root = CharacterModule.Get()
+    local _, root, hum = CharacterModule.Get()
+    if hum then
+        hum.AutoRotate = true
+    end
     if root then
         cleanFlightBodies(root)
         root.AssemblyLinearVelocity = Vector3.zero
@@ -233,8 +237,8 @@ function CharacterModule.FlyToEnemy(targetPart)
         return 
     end
     
-    local _, root = CharacterModule.Get()
-    if not root or not targetPart or not targetPart.Parent then 
+    local _, root, hum = CharacterModule.Get()
+    if not root or not hum or not targetPart or not targetPart.Parent then 
         CharacterModule.StopMovement()
         return 
     end
@@ -245,12 +249,18 @@ function CharacterModule.FlyToEnemy(targetPart)
         return
     end
 
+    -- Desativa o auto-rotate do Humanoid para que o BodyGyro mantenha a mira 100% no inimigo
+    if hum.AutoRotate then
+        hum.AutoRotate = false
+    end
+
     local mode = ConfigModule.Settings.PositionMode
-    local targetPos, targetGyroCFrame
+    local targetPos, lookAtPos
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos)
+        -- Aponta diretamente para o centro do inimigo (visão inclinada para baixo)
+        lookAtPos = enemyPos
     elseif mode == "Nas Costas" then
         local enemyLook = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
@@ -261,17 +271,19 @@ function CharacterModule.FlyToEnemy(targetPart)
         end
         
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
-        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 1.2, 0))
+        -- Olhando direto para as costas/tronco do mob
+        lookAtPos = enemyPos + Vector3.new(0, 1.2, 0)
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos)
+        lookAtPos = enemyPos
     end
 
     local bv, bg = getFlightBody(root)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    bg.CFrame = targetGyroCFrame
+    -- Mira direta fixa no inimigo
+    bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
 
     if dist <= 1.2 then
         bv.Velocity = Vector3.new(0, 0.05, 0)
@@ -283,9 +295,12 @@ end
 
 function CharacterModule.FlyToPortal(targetCFrame)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or not SharedState.IsRunning then return end
-    local _, root = CharacterModule.Get()
+    local _, root, hum = CharacterModule.Get()
     if not root or not root.Parent then return end
 
+    if hum then
+        hum.AutoRotate = true
+    end
     cleanFlightBodies(root)
 
     local targetPos = targetCFrame.Position
