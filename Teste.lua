@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (VERSÃO COMPLETA & ESTÁVEL)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MOVIMENTAÇÃO FLUIDA & ANTI-CONGELAMENTO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -144,7 +144,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA DINÂMICA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -158,12 +158,20 @@ function CharacterModule.Get()
     return nil, nil, nil
 end
 
+local function cleanFlightBodies(root)
+    if not root then return end
+    local bv = root:FindFirstChild("HubFlightForce")
+    if bv then bv:Destroy() end
+    local bg = root:FindFirstChild("HubFlightGyro")
+    if bg then bg:Destroy() end
+end
+
 local function getFlightBody(root)
     local bv = root:FindFirstChild("HubFlightForce")
     if not bv then
         bv = Instance.new("BodyVelocity")
         bv.Name = "HubFlightForce"
-        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        bv.MaxForce = Vector3.new(4e4, 4e4, 4e4)
         bv.Velocity = Vector3.zero
         bv.Parent = root
     end
@@ -172,8 +180,8 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        bg.P = 10000
+        bg.MaxTorque = Vector3.new(4e4, 4e4, 4e4)
+        bg.P = 8000
         bg.Parent = root
     end
 
@@ -189,10 +197,7 @@ function CharacterModule.StopMovement()
     
     local _, root = CharacterModule.Get()
     if root then
-        local bv = root:FindFirstChild("HubFlightForce")
-        if bv then bv:Destroy() end
-        local bg = root:FindFirstChild("HubFlightGyro")
-        if bg then bg:Destroy() end
+        cleanFlightBodies(root)
         root.AssemblyLinearVelocity = Vector3.zero
         root.AssemblyAngularVelocity = Vector3.zero
     end
@@ -263,11 +268,12 @@ function CharacterModule.FlyToEnemy(targetPart)
 
     bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
 
-    if dist <= 1.2 then
-        bv.Velocity = Vector3.zero
+    if dist <= 1.5 then
+        -- Segura a altitude suavemente sem congelar o personagem para sempre
+        bv.Velocity = Vector3.new(0, 0.05, 0)
     else
         local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 20, 90)
-        bv.Velocity = diff.Unit * math.min(dist * 6, speed)
+        bv.Velocity = diff.Unit * math.min(dist * 7, speed)
     end
 end
 
@@ -275,6 +281,9 @@ function CharacterModule.FlyToPortal(targetCFrame)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or not SharedState.IsRunning then return end
     local _, root = CharacterModule.Get()
     if not root or not root.Parent then return end
+
+    -- Remove o BodyVelocity para o Tween do portal assumir sem conflito
+    cleanFlightBodies(root)
 
     local targetPos = targetCFrame.Position
     local distance = (root.Position - targetPos).Magnitude
@@ -678,7 +687,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL & SEGUNDO PLANO) ]]
+-- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL) ]]
 local QuestModule = {}
 local lastQuestTick = 0
 
