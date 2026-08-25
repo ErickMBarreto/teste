@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FIX DEITAR REAL & NAS COSTAS DEFINITIVO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (DEITAR 100% FUNCIONAL VIA ANIMATE TOGGLE)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -80,7 +80,8 @@ local SharedState = {
     CurrentTween = nil,
     CurrentTargetPos = nil,
     LastPortalAttempt = 0,
-    DetectedWeapon = nil
+    DetectedWeapon = nil,
+    ShouldLayDown = false
 }
 
 -- [[ 2. CONFIGURAÇÕES ]]
@@ -144,7 +145,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA APRIMORADA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA DINÂMICA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -167,18 +168,26 @@ local function getRootJoint()
     return rootPart:FindFirstChild("RootJoint") or char:FindFirstChild("RootJoint", true)
 end
 
-local function setLayingDown(lay)
-    local rj = getRootJoint()
-    if not rj then return end
-    if not originalRootJointC0 then
-        originalRootJointC0 = rj.C0
-    end
-
-    if lay then
-        -- Gira o torso 90 graus para frente (posição horizontal de bruços)
-        rj.C0 = originalRootJointC0 * CFrame.Angles(math.rad(-90), 0, 0)
-    else
-        rj.C0 = originalRootJointC0
+local function toggleAnimateScript(enable)
+    local char = player.Character
+    if char then
+        local animate = char:FindFirstChild("Animate")
+        if animate and animate:IsA("LocalScript") then
+            if animate.Enabled ~= enable then
+                animate.Enabled = enable
+            end
+        end
+        if not enable then
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            if hum then
+                local animTrack = hum:FindFirstChildOfClass("Animator")
+                if animTrack then
+                    for _, track in ipairs(animTrack:GetPlayingAnimationTracks()) do
+                        pcall(function() track:Stop(0.1) end)
+                    end
+                end
+            end
+        end
     end
 end
 
@@ -218,8 +227,14 @@ function CharacterModule.StopMovement()
         SharedState.CurrentTween = nil
     end
     SharedState.CurrentTargetPos = nil
+    SharedState.ShouldLayDown = false
     
-    setLayingDown(false)
+    toggleAnimateScript(true)
+    local rj = getRootJoint()
+    if rj and originalRootJointC0 then
+        rj.C0 = originalRootJointC0
+    end
+
     local _, root = CharacterModule.Get()
     if root then
         cleanFlightBodies(root)
@@ -243,9 +258,29 @@ flightStabilizer = RunService.Stepped:Connect(function()
         local char, root, hum = CharacterModule.Get()
         if char and root and hum and hum.Health > 0 then
             root.AssemblyAngularVelocity = Vector3.zero
+            
+            -- Noclip dinâmico
             for _, part in ipairs(char:GetChildren()) do
                 if part:IsA("BasePart") and part.CanCollide then
                     part.CanCollide = false
+                end
+            end
+
+            -- Aplicação do estado Deitado direto no ciclo do Stepped
+            local rj = getRootJoint()
+            if rj then
+                if not originalRootJointC0 then
+                    originalRootJointC0 = rj.C0
+                end
+                if SharedState.ShouldLayDown then
+                    toggleAnimateScript(false)
+                    -- Inclina o torso em 90 graus para deitar de bruços no ar
+                    rj.C0 = originalRootJointC0 * CFrame.Angles(math.rad(-90), 0, 0)
+                else
+                    toggleAnimateScript(true)
+                    if originalRootJointC0 then
+                        rj.C0 = originalRootJointC0
+                    end
                 end
             end
         end
@@ -274,12 +309,11 @@ function CharacterModule.FlyToEnemy(targetPart)
     local targetPos, targetGyroCFrame
 
     if mode == "Em Cima da Cabeça" then
-        setLayingDown(true)
+        SharedState.ShouldLayDown = true
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
         targetGyroCFrame = CFrame.lookAt(root.Position, Vector3.new(enemyPos.X, root.Position.Y, enemyPos.Z))
     elseif mode == "Nas Costas" then
-        setLayingDown(false)
-        -- Calcula o ponto exatamente nas costas usando a rotação do monstro com elevação estável
+        SharedState.ShouldLayDown = false
         local enemyLook = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
         if flatLook.Magnitude > 0.05 then
@@ -291,7 +325,7 @@ function CharacterModule.FlyToEnemy(targetPart)
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
         targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 1.2, 0))
     else
-        setLayingDown(false)
+        SharedState.ShouldLayDown = false
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
         targetGyroCFrame = CFrame.lookAt(root.Position, enemyPos)
     end
@@ -315,7 +349,8 @@ function CharacterModule.FlyToPortal(targetCFrame)
     local _, root = CharacterModule.Get()
     if not root or not root.Parent then return end
 
-    setLayingDown(false)
+    SharedState.ShouldLayDown = false
+    toggleAnimateScript(true)
     cleanFlightBodies(root)
 
     local targetPos = targetCFrame.Position
