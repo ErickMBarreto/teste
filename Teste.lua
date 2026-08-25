@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (M1 100% FUNCIONAL & MIRA LIVRE)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA PARA BAIXO & FIX QUEST COUNT)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -101,7 +101,7 @@ ConfigModule.Settings = {
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
     BackDistance = 6.0,
-    TweenSpeed = 48,
+    TweenSpeed = 90,
     AttackSpeed = 0.15,
     -- Configurações Quests
     AutoClaimQuests = true,
@@ -180,8 +180,9 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
+        -- Torque liberado em 3 eixos para permitir a inclinação para baixo
         bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        bg.P = 10000
+        bg.P = 12000
         bg.D = 300
         bg.Parent = root
     end
@@ -246,11 +247,12 @@ function CharacterModule.FlyToEnemy(targetPart)
     end
 
     local mode = ConfigModule.Settings.PositionMode
-    local targetPos, lookAtPos
+    local targetPos, targetCFrame
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        lookAtPos = enemyPos
+        -- Aponta diretamente para baixo com vetor de referência frontal
+        targetCFrame = CFrame.lookAt(root.Position, enemyPos, Vector3.new(0, 0, -1))
     elseif mode == "Nas Costas" then
         local enemyLook = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
@@ -261,22 +263,22 @@ function CharacterModule.FlyToEnemy(targetPart)
         end
         
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
-        lookAtPos = enemyPos + Vector3.new(0, 1.2, 0)
+        targetCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 1.2, 0))
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        lookAtPos = enemyPos
+        targetCFrame = CFrame.lookAt(root.Position, enemyPos)
     end
 
     local bv, bg = getFlightBody(root)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
+    bg.CFrame = targetCFrame
 
     if dist <= 1.2 then
         bv.Velocity = Vector3.new(0, 0.05, 0)
     else
-        local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 25, 90)
+        local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 25, 120)
         bv.Velocity = diff.Unit * math.clamp(dist * 9, 20, speed)
     end
 end
@@ -700,7 +702,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL) ]]
+-- [[ 7. MÓDULO DE QUESTS (PRECISÃO DE CONTAGEM & SILENCIOSO) ]]
 local QuestModule = {}
 local lastQuestTick = 0
 
@@ -733,6 +735,7 @@ function QuestModule.ClaimAll()
     }
 
     local claimedCount = 0
+    local claimedSlots = {}
 
     for _, tabBtn in ipairs(tabs) do
         if tabBtn then
@@ -740,11 +743,17 @@ function QuestModule.ClaimAll()
             task.wait(0.25)
 
             for _, slot in ipairs(questsHolder:GetChildren()) do
-                if slot:IsA("ImageButton") or slot:IsA("GuiButton") then
+                if (slot:IsA("ImageButton") or slot:IsA("GuiButton")) and not claimedSlots[slot] then
                     local progressLabel = slot:FindFirstChild("QuestProgress", true)
                     if progressLabel and progressLabel:IsA("TextLabel") then
                         local txt = progressLabel.Text:lower()
-                        if txt:find("claim") or txt:find("resgatar") or txt:find("completed") then
+                        
+                        -- Ignora missões já resgatadas ("claimed", "resgatado", "coletado")
+                        local alreadyClaimed = txt:find("claimed") or txt:find("resgatado") or txt:find("coletado")
+                        local isReadyToClaim = (txt:find("claim") or txt:find("resgatar") or txt:find("completed") or txt:find("concluído")) and not alreadyClaimed
+
+                        if isReadyToClaim then
+                            claimedSlots[slot] = true
                             CharacterModule.TriggerButton(slot)
                             task.wait(0.1)
 
@@ -766,7 +775,7 @@ function QuestModule.ClaimAll()
     if claimedCount > 0 then
         Fluent:Notify({
             Title = "Quests Concluídas",
-            Content = string.format("%d missões resgatadas silenciosamente!", claimedCount),
+            Content = string.format("%d missões resgatadas com sucesso!", claimedCount),
             Duration = 3.5
         })
     end
@@ -1330,7 +1339,7 @@ CombatSection:AddSlider("BackDistance", {
 CombatSection:AddSlider("TweenSpeed", {
     Title = "Velocidade do Voo",
     Default = ConfigModule.Settings.TweenSpeed,
-    Min = 20, Max = 90, Rounding = 0,
+    Min = 20, Max = 120, Rounding = 0,
     Callback = function(Value) ConfigModule.Settings.TweenSpeed = Value ConfigModule.Save() end
 })
 CombatSection:AddToggle("HardcoreToggle", {
