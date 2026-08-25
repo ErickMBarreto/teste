@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA FIXA NAS COSTAS & COMBATE PRECISO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA & ROTAÇÃO RESTAURADAS 100%)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -87,7 +87,7 @@ local SharedState = {
 local ConfigModule = {}
 ConfigModule.Settings = {
     SelectedPhase = "One Piece",
-    PositionMode = "Nas Costas",
+    PositionMode = "Em Cima da Cabeça",
     CustomWeaponName = "VoidRods",
     AutoFarm = true,
     AutoAttack = true,
@@ -180,9 +180,9 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        bg.P = 20000 -- Resposta angular rápida
-        bg.D = 250
+        bg.MaxTorque = Vector3.new(4e5, 4e5, 4e5)
+        bg.P = 25000
+        bg.D = 50
         bg.Parent = root
     end
 
@@ -250,23 +250,17 @@ function CharacterModule.FlyToEnemy(targetPart)
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        targetCFrame = CFrame.lookAt(root.Position, enemyPos, Vector3.new(0, 0, -1))
+        -- Inclina 90 graus para baixo olhando diretamente para o inimigo
+        targetCFrame = CFrame.lookAt(targetPos, enemyPos) * CFrame.Angles(math.rad(-90), 0, 0)
     elseif mode == "Nas Costas" then
-        local enemyLook = targetPart.CFrame.LookVector
-        local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
-        if flatLook.Magnitude > 0.05 then
-            flatLook = flatLook.Unit
-        else
-            flatLook = Vector3.new(0, 0, 1)
-        end
-        
-        -- Posição nas costas na mesma altura do peito do mob
-        targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 1.5, 0)
-        -- Trava o olhar diretamente para o ponto central do mob
-        targetCFrame = CFrame.lookAt(root.Position, enemyPos)
+        -- Calcula o ponto exatamente nas costas usando a matriz de transformação do próprio monstro
+        local backOffset = targetPart.CFrame * CFrame.new(0, 1.5, ConfigModule.Settings.BackDistance)
+        targetPos = backOffset.Position
+        -- Mira direto no centro do mob
+        targetCFrame = CFrame.lookAt(targetPos, enemyPos)
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        targetCFrame = CFrame.lookAt(root.Position, enemyPos)
+        targetCFrame = CFrame.lookAt(targetPos, enemyPos)
     end
 
     local bv, bg = getFlightBody(root)
@@ -1287,7 +1281,7 @@ PhaseSection:AddDropdown("PhaseSelector", {
 
 PhaseSection:AddDropdown("PositionModeSelector", {
     Title = "Modo de Posicionamento",
-    Values = { "Nas Costas", "Em Cima da Cabeça", "Padrão (Anterior)" },
+    Values = { "Em Cima da Cabeça", "Nas Costas", "Padrão (Anterior)" },
     Default = ConfigModule.Settings.PositionMode,
     Callback = function(Value) ConfigModule.Settings.PositionMode = Value ConfigModule.Save() end
 })
