@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (100% ANTI-MOVIMENTO SUSPEITO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (M1 100% FUNCIONAL & MIRA LIVRE)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -180,9 +180,9 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        bg.MaxTorque = Vector3.new(0, 1e5, 0) -- Força rotação segura apenas no eixo horizontal (Yaw)
+        bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
         bg.P = 10000
-        bg.D = 200
+        bg.D = 300
         bg.Parent = root
     end
 
@@ -196,10 +196,7 @@ function CharacterModule.StopMovement()
     end
     SharedState.CurrentTargetPos = nil
     
-    local _, root, hum = CharacterModule.Get()
-    if hum then
-        hum.AutoRotate = true
-    end
+    local _, root = CharacterModule.Get()
     if root then
         cleanFlightBodies(root)
         root.AssemblyLinearVelocity = Vector3.zero
@@ -248,15 +245,12 @@ function CharacterModule.FlyToEnemy(targetPart)
         return
     end
 
-    if hum.AutoRotate then
-        hum.AutoRotate = false
-    end
-
     local mode = ConfigModule.Settings.PositionMode
-    local targetPos
+    local targetPos, lookAtPos
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
+        lookAtPos = enemyPos
     elseif mode == "Nas Costas" then
         local enemyLook = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
@@ -267,19 +261,17 @@ function CharacterModule.FlyToEnemy(targetPart)
         end
         
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
+        lookAtPos = enemyPos + Vector3.new(0, 1.2, 0)
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
+        lookAtPos = enemyPos
     end
 
     local bv, bg = getFlightBody(root)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    -- Mira horizontal natural e segura (sem pitch perigoso)
-    local horizontalEnemyTarget = Vector3.new(enemyPos.X, root.Position.Y, enemyPos.Z)
-    if (horizontalEnemyTarget - root.Position).Magnitude > 0.1 then
-        bg.CFrame = CFrame.lookAt(root.Position, horizontalEnemyTarget)
-    end
+    bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
 
     if dist <= 1.2 then
         bv.Velocity = Vector3.new(0, 0.05, 0)
@@ -291,12 +283,9 @@ end
 
 function CharacterModule.FlyToPortal(targetCFrame)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or not SharedState.IsRunning then return end
-    local _, root, hum = CharacterModule.Get()
+    local _, root = CharacterModule.Get()
     if not root or not root.Parent then return end
 
-    if hum then
-        hum.AutoRotate = true
-    end
     cleanFlightBodies(root)
 
     local targetPos = targetCFrame.Position
@@ -518,10 +507,20 @@ function CombatModule.ExecuteM1()
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
     comboIndex = (comboIndex % 4) + 1
     local weapon = CombatModule.GetEffectiveWeapon()
-    if attackRemote then pcall(function() attackRemote:FireServer("M1", weapon, comboIndex, 0, 0, 2) end) end
+    
+    if attackRemote then
+        pcall(function()
+            attackRemote:FireServer("M1", weapon, comboIndex, 0, 0, 2)
+        end)
+    end
 
     local char = player.Character
-    if char and char:FindFirstChildOfClass("Tool") then pcall(function() char:FindFirstChildOfClass("Tool"):Activate() end) end
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then
+            pcall(function() tool:Activate() end)
+        end
+    end
 end
 
 function CombatModule.ExecuteSkills()
