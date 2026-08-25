@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-FAVORITE SECRETS & AUTO-SELL)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-QUEST PRECISO & DESACOPLADO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -75,6 +75,7 @@ local SharedState = {
     IsClaiming = false,
     IsDungeonEnded = false,
     HasExecutedSell = false,
+    HasExecutedQuests = false,
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
@@ -101,7 +102,9 @@ ConfigModule.Settings = {
     BackDistance = 6.0,
     TweenSpeed = 48,
     AttackSpeed = 0.15,
-    AutoClaimQuests = false,
+    -- Configurações de Quests
+    AutoClaimQuests = true,
+    ClaimDelaySeconds = 8,
     -- Configurações Auto-Sell & Auto-Favorite
     AutoSell = true,
     SellDelaySeconds = 10,
@@ -525,7 +528,6 @@ function AutoSellModule.ResolveRarity(slot, itemObj)
     return "Unknown"
 end
 
--- Rotina de Auto-Favorite para proteger Secretos e Míticos
 function AutoSellModule.LockHighTierItems()
     if not equipRemote then return end
     local scroll = pgui:FindFirstChild("Main")
@@ -581,7 +583,6 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = true
     lastSellTick = tick()
 
-    -- 1. Primeiro bloqueia/favorita qualquer Secreto/Mítico antes de vender
     pcall(AutoSellModule.LockHighTierItems)
     task.wait(0.3)
 
@@ -604,7 +605,6 @@ function AutoSellModule.Execute()
                     local isFav = itemObj:GetAttribute("Favorite") == true
                     local itemType = tostring(itemObj:GetAttribute("Type") or ""):lower()
 
-                    -- Bloqueio rígido: nunca vende equipados, favoritos, materiais ou secretos
                     if not isEquipped and not isFav and itemType ~= "material" then
                         local rarity = AutoSellModule.ResolveRarity(slot, itemObj)
                         local shouldSell = false
@@ -641,52 +641,69 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE MISSÕES ]]
+-- [[ 7. MÓDULO DE QUESTS (REDUÇÃO E RESGATE ESTRITO) ]]
 local QuestModule = {}
 local questRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Quest", 10)
+local lastQuestTick = 0
 
 function QuestModule.ClaimAll()
     if not ConfigModule.Settings.AutoClaimQuests or SharedState.IsClaiming or not SharedState.IsRunning then return end
-    local main = pgui:FindFirstChild("Main")
-    local mainFrame = main and main:FindFirstChild("MainFrame")
-    local questsFrame = mainFrame and mainFrame:FindFirstChild("Quests")
-    local questsHolder = questsFrame and questsFrame:FindFirstChild("QuestsHolder")
-    local claimBtn = questsFrame and questsFrame:FindFirstChild("Information") and questsFrame.Information:FindFirstChild("Claim")
-    if not questsFrame or not questsHolder or not claimBtn then return end
+    if (tick() - lastQuestTick) < 10 then return end
 
     SharedState.IsClaiming = true
-    local originalVisible = questsFrame.Visible
-    questsFrame.Visible = false
+    lastQuestTick = tick()
+
+    local questsFrame = pgui and pgui:FindFirstChild("Main")
+        and pgui.Main:FindFirstChild("MainFrame")
+        and pgui.Main.MainFrame:FindFirstChild("Quests")
+
+    local questsHolder = questsFrame and questsFrame:FindFirstChild("QuestsHolder")
+    local claimBtn = questsFrame and questsFrame:FindFirstChild("Information") and questsFrame.Information:FindFirstChild("Claim")
+    local buttonsFolder = questsFrame and questsFrame:FindFirstChild("Buttons")
+
+    if not questsFrame or not questsHolder or not claimBtn or not buttonsFolder then
+        SharedState.IsClaiming = false
+        return
+    end
 
     local tabs = {
-        questsFrame:FindFirstChild("Buttons") and questsFrame.Buttons:FindFirstChild("Hourly"),
-        questsFrame:FindFirstChild("Buttons") and questsFrame.Buttons:FindFirstChild("Daily"),
-        questsFrame:FindFirstChild("Buttons") and questsFrame.Buttons:FindFirstChild("Weekly")
+        buttonsFolder:FindFirstChild("Hourly"),
+        buttonsFolder:FindFirstChild("Daily"),
+        buttonsFolder:FindFirstChild("Weekly")
     }
 
-    local claimed = 0
-    for _, tab in ipairs(tabs) do
-        if tab then
-            CharacterModule.TriggerButton(tab)
-            task.wait(0.12)
+    local claimedCount = 0
+
+    for _, tabBtn in ipairs(tabs) do
+        if tabBtn then
+            CharacterModule.TriggerButton(tabBtn)
+            task.wait(0.15)
+
             for _, slot in ipairs(questsHolder:GetChildren()) do
-                if slot:IsA("GuiButton") then
-                    local pLabel = slot:FindFirstChild("QuestProgress", true)
-                    if pLabel and pLabel:IsA("TextLabel") then
-                        local txt = pLabel.Text:lower()
+                if slot:IsA("ImageButton") or slot:IsA("GuiButton") then
+                    local progressLabel = slot:FindFirstChild("QuestProgress", true)
+                    if progressLabel and progressLabel:IsA("TextLabel") then
+                        local txt = progressLabel.Text:lower()
                         if txt == "claim" or txt == "resgatar" or txt == "completed" then
+                            -- Seleciona a quest
                             CharacterModule.TriggerButton(slot)
-                            task.wait(0.1)
+                            task.wait(0.08)
+
+                            -- Clica no botão de Claim principal da UI
                             CharacterModule.TriggerButton(claimBtn)
+
+                            -- Disparo no Remote oficial com fallback do SelectedQuest
                             if questRemote then
                                 pcall(function()
+                                    local selObj = slot:FindFirstChild("SelectedQuest")
+                                    if selObj and selObj.Value then
+                                        questRemote:FireServer("Claim", selObj.Value)
+                                    end
                                     questRemote:FireServer("Claim", slot.Name)
-                                    questRemote:FireServer(slot.Name)
-                                    local num = tonumber(slot.Name:match("%d+"))
-                                    if num then questRemote:FireServer(num) end
                                 end)
                             end
-                            claimed = claimed + 1
+
+                            claimedCount = claimedCount + 1
                             task.wait(0.12)
                         end
                     end
@@ -695,10 +712,14 @@ function QuestModule.ClaimAll()
         end
     end
 
-    questsFrame.Visible = originalVisible
-    if claimed > 0 then
-        Fluent:Notify({ Title = "Quests Resgatadas", Content = string.format("%d missões coletadas!", claimed), Duration = 3.5 })
+    if claimedCount > 0 then
+        Fluent:Notify({
+            Title = "Quests Concluídas",
+            Content = string.format("%d missões resgatadas com sucesso!", claimedCount),
+            Duration = 3.5
+        })
     end
+
     SharedState.IsClaiming = false
 end
 
@@ -1030,18 +1051,20 @@ task.spawn(function()
         if ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then
+                -- Agendamentos desacoplados por partida
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
                     
-                    -- Auto-Claim Quests (10s pós-início)
+                    -- Auto-Claim Quests (Execução única)
                     task.spawn(function()
-                        task.wait(10)
-                        if SharedState.IsRunning and not SharedState.IsDungeonEnded and ConfigModule.Settings.AutoClaimQuests then
+                        task.wait(ConfigModule.Settings.ClaimDelaySeconds)
+                        if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedQuests and ConfigModule.Settings.AutoClaimQuests then
+                            SharedState.HasExecutedQuests = true
                             QuestModule.ClaimAll()
                         end
                     end)
 
-                    -- Auto-Sell e Auto-Favorite (Executa estritamente 1 vez no tempo configurado)
+                    -- Auto-Sell e Auto-Favorite (Execução única)
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.SellDelaySeconds)
                         if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell then
@@ -1063,8 +1086,6 @@ task.spawn(function()
                     SharedState.IsDungeonEnded = true
                     SharedState.IsVirusActive = false
                     CharacterModule.StopMovement()
-
-                    if ConfigModule.Settings.AutoClaimQuests then pcall(QuestModule.ClaimAll) end
 
                     if ConfigModule.Settings.AutoEngage and DungeonStateModule.CheckEngage() then
                         SharedState.IsDungeonEnded = false
@@ -1388,12 +1409,20 @@ SellRaritiesSection:AddToggle("SellMythicToggle", {
 -- ABA SETTINGS
 local QuestsSection = Tabs.Settings:AddSection("Automação de Missões (Quests)")
 QuestsSection:AddToggle("AutoClaimQuestsToggle", {
-    Title = "Auto-Claim de Missões (10s pós-início)",
+    Title = "Auto-Claim de Missões",
+    Description = "Resgata automaticamente as missões concluídas",
     Default = ConfigModule.Settings.AutoClaimQuests,
     Callback = function(Value) ConfigModule.Settings.AutoClaimQuests = Value ConfigModule.Save() end
 })
+QuestsSection:AddSlider("ClaimDelaySlider", {
+    Title = "Tempo pós-início para Resgatar (s)",
+    Default = ConfigModule.Settings.ClaimDelaySeconds,
+    Min = 1, Max = 30, Rounding = 0,
+    Callback = function(Value) ConfigModule.Settings.ClaimDelaySeconds = Value ConfigModule.Save() end
+})
 QuestsSection:AddButton({
     Title = "⚡ Resgatar Missões Agora",
+    Description = "Varre Hourly, Daily e Weekly resgatando o que estiver pronto",
     Callback = function() pcall(QuestModule.ClaimAll) end
 })
 
