@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA PARA BAIXO & FIX QUEST COUNT)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA FIXA NAS COSTAS & COMBATE PRECISO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -87,7 +87,7 @@ local SharedState = {
 local ConfigModule = {}
 ConfigModule.Settings = {
     SelectedPhase = "One Piece",
-    PositionMode = "Em Cima da Cabeça",
+    PositionMode = "Nas Costas",
     CustomWeaponName = "VoidRods",
     AutoFarm = true,
     AutoAttack = true,
@@ -180,10 +180,9 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        -- Torque liberado em 3 eixos para permitir a inclinação para baixo
         bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        bg.P = 12000
-        bg.D = 300
+        bg.P = 20000 -- Resposta angular rápida
+        bg.D = 250
         bg.Parent = root
     end
 
@@ -251,7 +250,6 @@ function CharacterModule.FlyToEnemy(targetPart)
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        -- Aponta diretamente para baixo com vetor de referência frontal
         targetCFrame = CFrame.lookAt(root.Position, enemyPos, Vector3.new(0, 0, -1))
     elseif mode == "Nas Costas" then
         local enemyLook = targetPart.CFrame.LookVector
@@ -262,8 +260,10 @@ function CharacterModule.FlyToEnemy(targetPart)
             flatLook = Vector3.new(0, 0, 1)
         end
         
-        targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
-        targetCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 1.2, 0))
+        -- Posição nas costas na mesma altura do peito do mob
+        targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 1.5, 0)
+        -- Trava o olhar diretamente para o ponto central do mob
+        targetCFrame = CFrame.lookAt(root.Position, enemyPos)
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
         targetCFrame = CFrame.lookAt(root.Position, enemyPos)
@@ -748,7 +748,6 @@ function QuestModule.ClaimAll()
                     if progressLabel and progressLabel:IsA("TextLabel") then
                         local txt = progressLabel.Text:lower()
                         
-                        -- Ignora missões já resgatadas ("claimed", "resgatado", "coletado")
                         local alreadyClaimed = txt:find("claimed") or txt:find("resgatado") or txt:find("coletado")
                         local isReadyToClaim = (txt:find("claim") or txt:find("resgatar") or txt:find("completed") or txt:find("concluído")) and not alreadyClaimed
 
@@ -1288,7 +1287,7 @@ PhaseSection:AddDropdown("PhaseSelector", {
 
 PhaseSection:AddDropdown("PositionModeSelector", {
     Title = "Modo de Posicionamento",
-    Values = { "Em Cima da Cabeça", "Nas Costas", "Padrão (Anterior)" },
+    Values = { "Nas Costas", "Em Cima da Cabeça", "Padrão (Anterior)" },
     Default = ConfigModule.Settings.PositionMode,
     Callback = function(Value) ConfigModule.Settings.PositionMode = Value ConfigModule.Save() end
 })
