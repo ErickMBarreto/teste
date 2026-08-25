@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO WEAPON DETECTION & FULL INTEGRATION)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FIX DETECÇÃO DE ARMA & UI CLEAN)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -88,7 +88,7 @@ local ConfigModule = {}
 ConfigModule.Settings = {
     SelectedPhase = "One Piece",
     PositionMode = "Em Cima da Cabeça",
-    CustomWeaponName = "", -- Deixe vazio para Auto-Detect automático
+    CustomWeaponName = "VoidRods",
     AutoFarm = true,
     AutoAttack = true,
     AutoSkills = true,
@@ -409,20 +409,34 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 5. MÓDULO DE COMBATE & AUTO-DETECÇÃO DE ARMA ]]
+-- [[ 5. MÓDULO DE COMBATE & DETECÇÃO DE ARMA EXATA ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local lastSkillUse = 0
 local comboIndex = 1
-local lastDetectTick = 0
 
 function CombatModule.DetectEquippedWeapon()
-    -- 1. Varredura direta no inventário mapeado
-    local scroll = pgui:FindFirstChild("Main")
-        and pgui.Main:FindFirstChild("MainFrame")
-        and pgui.Main.MainFrame:FindFirstChild("Items")
-        and pgui.Main.MainFrame.Items:FindFirstChild("Scroll")
+    -- 1. Varredura no frame de equipamentos (Slots oficiais da UI)
+    local main = pgui:FindFirstChild("Main")
+    local mainFrame = main and main:FindFirstChild("MainFrame")
+    local itemsFrame = mainFrame and mainFrame:FindFirstChild("Items")
+    
+    if itemsFrame then
+        local weaponSlot = itemsFrame:FindFirstChild("Weapon", true) or itemsFrame:FindFirstChild("WeaponSlot", true)
+        if weaponSlot then
+            local itemVal = weaponSlot:FindFirstChild("Item")
+            if itemVal and itemVal:IsA("ObjectValue") and itemVal.Value then
+                return itemVal.Value.Name
+            end
+            local title = weaponSlot:FindFirstChild("Title")
+            if title and title:IsA("TextLabel") and title.Text ~= "" and title.Text ~= "Empty" then
+                return title.Text
+            end
+        end
+    end
 
+    -- 2. Varredura precisa no Scroll (busca especificamente por Type == "Weapon" e Equipped == true)
+    local scroll = itemsFrame and itemsFrame:FindFirstChild("Scroll")
     if scroll then
         for _, slot in ipairs(scroll:GetChildren()) do
             if (slot:IsA("ImageButton") or slot:IsA("Frame")) and slot:FindFirstChild("Item") and slot.Item:IsA("ObjectValue") then
@@ -434,7 +448,11 @@ function CombatModule.DetectEquippedWeapon()
                     local eqVisual = slot:FindFirstChild("EquippedSelection")
                     local isVisuallyEquipped = eqVisual and eqVisual:IsA("GuiObject") and eqVisual.Visible
 
-                    if (isEquipped or isVisuallyEquipped) and (itemType == "weapon" or not itemType:find("armor")) then
+                    -- Ignora qualquer acessório, armadura ou máscara
+                    local nameLower = itemObj.Name:lower()
+                    local isArmor = itemType:find("armor") or nameLower:find("mask") or nameLower:find("ring") or nameLower:find("necklace") or nameLower:find("hat") or nameLower:find("cape")
+
+                    if (isEquipped or isVisuallyEquipped) and (itemType == "weapon" or not isArmor) then
                         return itemObj.Name
                     end
                 end
@@ -442,17 +460,17 @@ function CombatModule.DetectEquippedWeapon()
         end
     end
 
-    -- 2. Fallback pelo Character / Backpack
+    -- 3. Fallback no Character / Backpack
     local char = player.Character
     if char then
         local tool = char:FindFirstChildOfClass("Tool")
-        if tool then return tool.Name end
+        if tool and not tool.Name:lower():find("armor") then return tool.Name end
     end
 
     local bp = player:FindFirstChild("Backpack")
     if bp then
         local tool = bp:FindFirstChildOfClass("Tool")
-        if tool then return tool.Name end
+        if tool and not tool.Name:lower():find("armor") then return tool.Name end
     end
 
     return "VoidRods"
@@ -462,14 +480,7 @@ function CombatModule.GetEffectiveWeapon()
     if ConfigModule.Settings.CustomWeaponName and ConfigModule.Settings.CustomWeaponName ~= "" then
         return ConfigModule.Settings.CustomWeaponName
     end
-
-    -- Atualiza detecção a cada 3 segundos em segundo plano
-    if not SharedState.DetectedWeapon or (tick() - lastDetectTick) > 3.0 then
-        lastDetectTick = tick()
-        SharedState.DetectedWeapon = CombatModule.DetectEquippedWeapon()
-    end
-
-    return SharedState.DetectedWeapon or "VoidRods"
+    return CombatModule.DetectEquippedWeapon()
 end
 
 function CombatModule.GetHotbar()
@@ -1259,20 +1270,22 @@ PhaseSection:AddDropdown("PositionModeSelector", {
 
 local WeaponSection = Tabs.Farm:AddSection("Configuração de Arma")
 local WeaponInput = WeaponSection:AddInput("WeaponInputBox", {
-    Title = "Arma Equipada (Deixe vazio para Auto-Detect)",
+    Title = "Arma Equipada",
     Default = ConfigModule.Settings.CustomWeaponName,
-    Placeholder = "Auto-Detect Ativo...",
+    Placeholder = "Ex: VoidRods, Katana...",
     Finished = true,
     Callback = function(Value) ConfigModule.Settings.CustomWeaponName = Value ConfigModule.Save() end
 })
 
 WeaponSection:AddButton({
-    Title = "🔍 Detectar Arma Agora",
+    Title = "🔍 Detectar Arma",
     Description = "Lê e exibe o nome da arma equipada no momento",
     Callback = function()
         local detected = CombatModule.DetectEquippedWeapon()
         if detected and detected ~= "" then
-            SharedState.DetectedWeapon = detected
+            ConfigModule.Settings.CustomWeaponName = detected
+            WeaponInput:SetValue(detected)
+            ConfigModule.Save()
             Fluent:Notify({ Title = "Arma Detectada", Content = "Equipada: " .. tostring(detected), Duration = 4 })
         else
             Fluent:Notify({ Title = "Não Encontrada", Content = "Nenhuma arma identificada.", Duration = 4 })
