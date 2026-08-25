@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA & ROTAÇÃO RESTAURADAS 100%)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA FIXA & ORIENTAÇÃO DEFINITIVA)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -180,9 +180,9 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        bg.MaxTorque = Vector3.new(4e5, 4e5, 4e5)
-        bg.P = 25000
-        bg.D = 50
+        bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+        bg.P = 30000
+        bg.D = 100
         bg.Parent = root
     end
 
@@ -250,17 +250,27 @@ function CharacterModule.FlyToEnemy(targetPart)
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        -- Inclina 90 graus para baixo olhando diretamente para o inimigo
-        targetCFrame = CFrame.lookAt(targetPos, enemyPos) * CFrame.Angles(math.rad(-90), 0, 0)
+        
+        -- Garante rotação frontal apontando para baixo em direção ao monstro
+        local lookDir = (enemyPos - targetPos).Unit
+        local rightDir = Vector3.new(1, 0, 0)
+        local upDir = rightDir:Cross(lookDir).Unit
+        targetCFrame = CFrame.fromMatrix(root.Position, rightDir, upDir, -lookDir)
     elseif mode == "Nas Costas" then
-        -- Calcula o ponto exatamente nas costas usando a matriz de transformação do próprio monstro
-        local backOffset = targetPart.CFrame * CFrame.new(0, 1.5, ConfigModule.Settings.BackDistance)
-        targetPos = backOffset.Position
-        -- Mira direto no centro do mob
-        targetCFrame = CFrame.lookAt(targetPos, enemyPos)
+        local enemyLook = targetPart.CFrame.LookVector
+        local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
+        if flatLook.Magnitude > 0.05 then
+            flatLook = flatLook.Unit
+        else
+            flatLook = Vector3.new(0, 0, 1)
+        end
+        
+        targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 1.5, 0)
+        -- Trava a mira cravada na hitbox do monstro
+        targetCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 0.5, 0))
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        targetCFrame = CFrame.lookAt(targetPos, enemyPos)
+        targetCFrame = CFrame.lookAt(root.Position, enemyPos)
     end
 
     local bv, bg = getFlightBody(root)
