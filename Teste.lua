@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA FIXA & ORIENTAÇÃO DEFINITIVA)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FIX TRAVAMENTO & TARGETING FLUIDO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -69,6 +69,7 @@ local SharedState = {
     IsRunning = true,
     IsRespawning = false,
     IsTransitioning = false,
+    TransitionStart = 0,
     EnteringPortal = false,
     IsVirusActive = false,
     IsSelling = false,
@@ -144,7 +145,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -228,15 +229,31 @@ flightStabilizer = RunService.Stepped:Connect(function()
 end)
 
 function CharacterModule.FlyToEnemy(targetPart)
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then 
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or not SharedState.IsRunning then 
         CharacterModule.StopMovement()
         return 
     end
+
+    -- Watchdog anti-travamento de estados
+    if SharedState.IsTransitioning and (tick() - SharedState.TransitionStart) > 2.5 then
+        SharedState.IsTransitioning = false
+    end
+    if SharedState.EnteringPortal and (tick() - SharedState.LastPortalAttempt) > 3.5 then
+        SharedState.EnteringPortal = false
+    end
+
+    if SharedState.IsTransitioning or SharedState.EnteringPortal then return end
     
     local _, root, hum = CharacterModule.Get()
     if not root or not hum or not targetPart or not targetPart.Parent then 
         CharacterModule.StopMovement()
         return 
+    end
+
+    -- Cancela qualquer interpolação residual de Tween ativa
+    if SharedState.CurrentTween then
+        SharedState.CurrentTween:Cancel()
+        SharedState.CurrentTween = nil
     end
 
     local enemyPos = targetPart.Position
@@ -250,8 +267,6 @@ function CharacterModule.FlyToEnemy(targetPart)
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        
-        -- Garante rotação frontal apontando para baixo em direção ao monstro
         local lookDir = (enemyPos - targetPos).Unit
         local rightDir = Vector3.new(1, 0, 0)
         local upDir = rightDir:Cross(lookDir).Unit
@@ -266,7 +281,6 @@ function CharacterModule.FlyToEnemy(targetPart)
         end
         
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 1.5, 0)
-        -- Trava a mira cravada na hitbox do monstro
         targetCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 0.5, 0))
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
@@ -288,7 +302,7 @@ function CharacterModule.FlyToEnemy(targetPart)
 end
 
 function CharacterModule.FlyToPortal(targetCFrame)
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or not SharedState.IsRunning then return end
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or not SharedState.IsRunning then return end
     local _, root = CharacterModule.Get()
     if not root or not root.Parent then return end
 
@@ -334,13 +348,15 @@ function CharacterModule.PressKey(keyCode)
     end)
 end
 
--- [[ 4. MÓDULO DE DETECÇÃO DE INIMIGOS ]]
+-- [[ 4. MÓDULO DE DETECÇÃO DE INIMIGOS (RECURSIVO & ROBUSTO) ]]
 local TargetingModule = {}
 
 function TargetingModule.IsAlive(obj)
     if not obj or not obj.Parent then return false end
     local hum = obj:FindFirstChildOfClass("Humanoid")
-    if hum then return (hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead) end
+    if hum then 
+        return (hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead) 
+    end
     local hpAttr = obj:GetAttribute("Health") or obj:GetAttribute("HP")
     if hpAttr then return tonumber(hpAttr) > 0 end
     local hpVal = obj:FindFirstChild("Health") or obj:FindFirstChild("HP")
@@ -376,14 +392,20 @@ function TargetingModule.GetLivingEnemies(phase)
 
     local gameFolder = workspace:FindFirstChild("Game")
     local enemiesFolder = (gameFolder and gameFolder:FindFirstChild("Enemies")) or workspace:FindFirstChild("Enemies")
+    
+    -- Varredura profunda para capturar mobs mesmo se estiverem agrupados em subpastas
     if enemiesFolder then
-        for _, enemy in ipairs(enemiesFolder:GetChildren()) do addEntity(enemy) end
+        for _, desc in ipairs(enemiesFolder:GetDescendants()) do
+            if desc:IsA("Model") then addEntity(desc) end
+        end
     end
 
     if SharedState.IsVirusActive or phase == "Incursão" then
         local virusFolder = (gameFolder and (gameFolder:FindFirstChild("Virus") or gameFolder:FindFirstChild("Boss") or gameFolder:FindFirstChild("SecretBoss"))) or workspace:FindFirstChild("Virus")
         if virusFolder then
-            for _, mob in ipairs(virusFolder:GetChildren()) do addEntity(mob) end
+            for _, desc in ipairs(virusFolder:GetDescendants()) do
+                if desc:IsA("Model") then addEntity(desc) end
+            end
             if TargetingModule.IsAlive(virusFolder) then addEntity(virusFolder) end
         end
 
@@ -398,9 +420,8 @@ function TargetingModule.GetLivingEnemies(phase)
     end
 
     if #list == 0 and gameFolder and gameFolder:FindFirstChild("Stages") then
-        for _, stage in ipairs(gameFolder.Stages:GetChildren()) do
-            local spawns = stage:FindFirstChild("Spawns") or stage
-            for _, mob in ipairs(spawns:GetChildren()) do addEntity(mob) end
+        for _, stage in ipairs(gameFolder.Stages:GetDescendants()) do
+            if stage:IsA("Model") then addEntity(stage) end
         end
     end
 
@@ -912,6 +933,7 @@ function FlowModule.RunBleach()
         CharacterModule.StopMovement()
         SharedState.EnteringPortal = false
         SharedState.IsTransitioning = true
+        SharedState.TransitionStart = tick()
         task.wait(0.4)
         SharedState.IsTransitioning = false
         return
@@ -964,6 +986,7 @@ function FlowModule.RunOnePiece()
         CharacterModule.StopMovement()
         SharedState.EnteringPortal = false
         SharedState.IsTransitioning = true
+        SharedState.TransitionStart = tick()
         task.wait(0.4)
         SharedState.IsTransitioning = false
         return
