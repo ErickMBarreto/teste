@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MIRA FIXA NO ALVO CORRIGIDA)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (100% ANTI-MOVIMENTO SUSPEITO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -79,7 +79,6 @@ local SharedState = {
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
-    CurrentLookAtPos = nil,
     LastPortalAttempt = 0,
     DetectedWeapon = nil
 }
@@ -145,7 +144,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA DE MIRA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -181,9 +180,9 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        bg.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
-        bg.P = 15000
-        bg.D = 300
+        bg.MaxTorque = Vector3.new(0, 1e5, 0) -- Força rotação segura apenas no eixo horizontal (Yaw)
+        bg.P = 10000
+        bg.D = 200
         bg.Parent = root
     end
 
@@ -196,7 +195,6 @@ function CharacterModule.StopMovement()
         SharedState.CurrentTween = nil
     end
     SharedState.CurrentTargetPos = nil
-    SharedState.CurrentLookAtPos = nil
     
     local _, root, hum = CharacterModule.Get()
     if hum then
@@ -223,16 +221,10 @@ flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
         local char, root, hum = CharacterModule.Get()
         if char and root and hum and hum.Health > 0 then
-            -- Noclip contínuo
             for _, part in ipairs(char:GetChildren()) do
                 if part:IsA("BasePart") and part.CanCollide then
                     part.CanCollide = false
                 end
-            end
-
-            -- Trava e alinha a mira frame a frame no CFrame do personagem
-            if SharedState.CurrentLookAtPos then
-                root.CFrame = CFrame.lookAt(root.Position, SharedState.CurrentLookAtPos)
             end
         end
     end
@@ -261,12 +253,10 @@ function CharacterModule.FlyToEnemy(targetPart)
     end
 
     local mode = ConfigModule.Settings.PositionMode
-    local targetPos, lookAtPos
+    local targetPos
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        -- Offset sutil para evitar singularidade de eixo ao olhar 100% para baixo
-        lookAtPos = Vector3.new(enemyPos.X + 0.001, enemyPos.Y, enemyPos.Z + 0.001)
     elseif mode == "Nas Costas" then
         local enemyLook = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
@@ -277,19 +267,19 @@ function CharacterModule.FlyToEnemy(targetPart)
         end
         
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 2.5, 0)
-        lookAtPos = enemyPos + Vector3.new(0, 1.2, 0)
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        lookAtPos = enemyPos
     end
-
-    SharedState.CurrentLookAtPos = lookAtPos
 
     local bv, bg = getFlightBody(root)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    bg.CFrame = CFrame.lookAt(root.Position, lookAtPos)
+    -- Mira horizontal natural e segura (sem pitch perigoso)
+    local horizontalEnemyTarget = Vector3.new(enemyPos.X, root.Position.Y, enemyPos.Z)
+    if (horizontalEnemyTarget - root.Position).Magnitude > 0.1 then
+        bg.CFrame = CFrame.lookAt(root.Position, horizontalEnemyTarget)
+    end
 
     if dist <= 1.2 then
         bv.Velocity = Vector3.new(0, 0.05, 0)
@@ -304,7 +294,6 @@ function CharacterModule.FlyToPortal(targetCFrame)
     local _, root, hum = CharacterModule.Get()
     if not root or not root.Parent then return end
 
-    SharedState.CurrentLookAtPos = nil
     if hum then
         hum.AutoRotate = true
     end
