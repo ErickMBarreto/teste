@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (ABA EXCLUSIVA DE AUTO-SELL)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-FAVORITE SECRETS & AUTO-SELL)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -102,9 +102,11 @@ ConfigModule.Settings = {
     TweenSpeed = 48,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
-    -- Configurações Auto-Sell
+    -- Configurações Auto-Sell & Auto-Favorite
     AutoSell = true,
     SellDelaySeconds = 10,
+    AutoFavoriteSecrets = true,
+    AutoFavoriteMythics = false,
     SellCommon = true,
     SellRare = true,
     SellEpic = true,
@@ -489,7 +491,7 @@ function CombatModule.ExecuteSkills()
     end
 end
 
--- [[ 6. MÓDULO DE AUTO-SELL (EXECUÇÃO ÚNICA PÓS-INÍCIO) ]]
+-- [[ 6. MÓDULO DE AUTO-SELL & AUTO-FAVORITE ]]
 local AutoSellModule = {}
 local equipRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Equip", 10)
 local lastSellTick = 0
@@ -523,12 +525,65 @@ function AutoSellModule.ResolveRarity(slot, itemObj)
     return "Unknown"
 end
 
+-- Rotina de Auto-Favorite para proteger Secretos e Míticos
+function AutoSellModule.LockHighTierItems()
+    if not equipRemote then return end
+    local scroll = pgui:FindFirstChild("Main")
+        and pgui.Main:FindFirstChild("MainFrame")
+        and pgui.Main.MainFrame:FindFirstChild("Items")
+        and pgui.Main.MainFrame.Items:FindFirstChild("Scroll")
+
+    if not scroll then return end
+    local favoritedCount = 0
+
+    for _, slot in ipairs(scroll:GetChildren()) do
+        if (slot:IsA("ImageButton") or slot:IsA("Frame")) and slot:FindFirstChild("Item") and slot.Item:IsA("ObjectValue") then
+            local itemObj = slot.Item.Value
+            if itemObj and itemObj.Parent then
+                local isFav = itemObj:GetAttribute("Favorite") == true
+                if not isFav then
+                    local rarity = AutoSellModule.ResolveRarity(slot, itemObj)
+                    local shouldLock = false
+
+                    if rarity == "Secret" and ConfigModule.Settings.AutoFavoriteSecrets then
+                        shouldLock = true
+                    elseif rarity == "Mythic" and ConfigModule.Settings.AutoFavoriteMythics then
+                        shouldLock = true
+                    end
+
+                    if shouldLock then
+                        pcall(function()
+                            equipRemote:FireServer("Favorite", itemObj)
+                            local favIcon = slot:FindFirstChild("Favorite", true)
+                            if favIcon then CharacterModule.TriggerButton(favIcon) end
+                        end)
+                        favoritedCount = favoritedCount + 1
+                        task.wait(0.1)
+                    end
+                end
+            end
+        end
+    end
+
+    if favoritedCount > 0 then
+        Fluent:Notify({
+            Title = "🔒 Auto-Favorite Ativo",
+            Content = string.format("%d itens de alto valor protegidos!", favoritedCount),
+            Duration = 4
+        })
+    end
+end
+
 function AutoSellModule.Execute()
     if not ConfigModule.Settings.AutoSell or SharedState.IsSelling or not SharedState.IsRunning or not equipRemote then return end
     if (tick() - lastSellTick) < 10 then return end
 
     SharedState.IsSelling = true
     lastSellTick = tick()
+
+    -- 1. Primeiro bloqueia/favorita qualquer Secreto/Mítico antes de vender
+    pcall(AutoSellModule.LockHighTierItems)
+    task.wait(0.3)
 
     local scroll = pgui:FindFirstChild("Main")
         and pgui.Main:FindFirstChild("MainFrame")
@@ -549,6 +604,7 @@ function AutoSellModule.Execute()
                     local isFav = itemObj:GetAttribute("Favorite") == true
                     local itemType = tostring(itemObj:GetAttribute("Type") or ""):lower()
 
+                    -- Bloqueio rígido: nunca vende equipados, favoritos, materiais ou secretos
                     if not isEquipped and not isFav and itemType ~= "material" then
                         local rarity = AutoSellModule.ResolveRarity(slot, itemObj)
                         local shouldSell = false
@@ -974,7 +1030,6 @@ task.spawn(function()
         if ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then
-                -- Agendamento Único por Dungeon
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
                     
@@ -986,12 +1041,17 @@ task.spawn(function()
                         end
                     end)
 
-                    -- Auto-Sell com Delay Configurável (Executa estritamente 1 vez)
+                    -- Auto-Sell e Auto-Favorite (Executa estritamente 1 vez no tempo configurado)
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.SellDelaySeconds)
-                        if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell and ConfigModule.Settings.AutoSell then
+                        if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell then
                             SharedState.HasExecutedSell = true
-                            AutoSellModule.Execute()
+                            if ConfigModule.Settings.AutoFavoriteSecrets or ConfigModule.Settings.AutoFavoriteMythics then
+                                AutoSellModule.LockHighTierItems()
+                            end
+                            if ConfigModule.Settings.AutoSell then
+                                AutoSellModule.Execute()
+                            end
                         end
                     end)
                 end
@@ -1258,7 +1318,26 @@ CombatSection:AddSlider("SkillCooldownSlider", {
     Callback = function(Value) ConfigModule.Settings.SkillCooldown = Value ConfigModule.Save() end
 })
 
--- ABA AUTO-SELL
+-- ABA AUTO-SELL & FAVORITE
+local FavoriteSection = Tabs.Sell:AddSection("Proteção de Itens (Auto-Favorite)")
+FavoriteSection:AddToggle("AutoFavSecretsToggle", {
+    Title = "Auto-Favorite Secretos",
+    Description = "Bloqueia e favorita automaticamente qualquer item Secreto",
+    Default = ConfigModule.Settings.AutoFavoriteSecrets,
+    Callback = function(Value) ConfigModule.Settings.AutoFavoriteSecrets = Value ConfigModule.Save() end
+})
+FavoriteSection:AddToggle("AutoFavMythicsToggle", {
+    Title = "Auto-Favorite Míticos",
+    Description = "Bloqueia e favorita automaticamente qualquer item Mítico",
+    Default = ConfigModule.Settings.AutoFavoriteMythics,
+    Callback = function(Value) ConfigModule.Settings.AutoFavoriteMythics = Value ConfigModule.Save() end
+})
+FavoriteSection:AddButton({
+    Title = "🔒 Bloquear / Favoritar Raros Agora",
+    Description = "Varre o inventário e protege itens Secretos e Míticos",
+    Callback = function() pcall(AutoSellModule.LockHighTierItems) end
+})
+
 local SellMainSection = Tabs.Sell:AddSection("Controle Geral de Venda")
 SellMainSection:AddToggle("AutoSellToggle", {
     Title = "Ativar Auto-Sell",
