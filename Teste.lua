@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-SELL DEFINITIVO INTEGRADO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (ABA EXCLUSIVA DE AUTO-SELL)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -74,6 +74,7 @@ local SharedState = {
     IsSelling = false,
     IsClaiming = false,
     IsDungeonEnded = false,
+    HasExecutedSell = false,
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
@@ -101,8 +102,10 @@ ConfigModule.Settings = {
     TweenSpeed = 48,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
-    -- Configs de Auto-Sell
+    -- Configurações Auto-Sell
     AutoSell = true,
+    SellDelaySeconds = 10,
+    SellCommon = true,
     SellRare = true,
     SellEpic = true,
     SellLegendary = true,
@@ -486,7 +489,7 @@ function CombatModule.ExecuteSkills()
     end
 end
 
--- [[ 6. MÓDULO DE AUTO-SELL BLINDADO ]]
+-- [[ 6. MÓDULO DE AUTO-SELL (EXECUÇÃO ÚNICA PÓS-INÍCIO) ]]
 local AutoSellModule = {}
 local equipRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Equip", 10)
 local lastSellTick = 0
@@ -505,7 +508,6 @@ function AutoSellModule.ResolveRarity(slot, itemObj)
         end
     end
 
-    -- Fallback visual pelo slot
     local qualityLabel = slot:FindFirstChild("Quality", true)
     if qualityLabel and qualityLabel:IsA("TextLabel") and qualityLabel.Text ~= "" then
         local t = qualityLabel.Text:lower()
@@ -523,7 +525,7 @@ end
 
 function AutoSellModule.Execute()
     if not ConfigModule.Settings.AutoSell or SharedState.IsSelling or not SharedState.IsRunning or not equipRemote then return end
-    if (tick() - lastSellTick) < 12 then return end
+    if (tick() - lastSellTick) < 10 then return end
 
     SharedState.IsSelling = true
     lastSellTick = tick()
@@ -547,12 +549,13 @@ function AutoSellModule.Execute()
                     local isFav = itemObj:GetAttribute("Favorite") == true
                     local itemType = tostring(itemObj:GetAttribute("Type") or ""):lower()
 
-                    -- Nunca vende itens favoritos, equipados ou materiais
                     if not isEquipped and not isFav and itemType ~= "material" then
                         local rarity = AutoSellModule.ResolveRarity(slot, itemObj)
                         local shouldSell = false
 
-                        if rarity == "Common" or rarity == "Rare" and ConfigModule.Settings.SellRare then
+                        if rarity == "Common" and ConfigModule.Settings.SellCommon then
+                            shouldSell = true
+                        elseif rarity == "Rare" and ConfigModule.Settings.SellRare then
                             shouldSell = true
                         elseif rarity == "Epic" and ConfigModule.Settings.SellEpic then
                             shouldSell = true
@@ -575,7 +578,7 @@ function AutoSellModule.Execute()
         pcall(function()
             equipRemote:FireServer("Sell", itemsToSell)
         end)
-        Fluent:Notify({ Title = "Auto-Sell", Content = string.format("%d itens vendidos com sucesso!", #itemsToSell), Duration = 3 })
+        Fluent:Notify({ Title = "Auto-Sell", Content = string.format("%d itens vendidos!", #itemsToSell), Duration = 3 })
         task.wait(2.0)
     end
 
@@ -971,14 +974,24 @@ task.spawn(function()
         if ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then
+                -- Agendamento Único por Dungeon
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
-                    -- Rotinas Agendadas Únicas (Quests e Auto-Sell)
+                    
+                    -- Auto-Claim Quests (10s pós-início)
                     task.spawn(function()
                         task.wait(10)
-                        if SharedState.IsRunning and not SharedState.IsDungeonEnded then
-                            if ConfigModule.Settings.AutoClaimQuests then QuestModule.ClaimAll() end
-                            if ConfigModule.Settings.AutoSell then AutoSellModule.Execute() end
+                        if SharedState.IsRunning and not SharedState.IsDungeonEnded and ConfigModule.Settings.AutoClaimQuests then
+                            QuestModule.ClaimAll()
+                        end
+                    end)
+
+                    -- Auto-Sell com Delay Configurável (Executa estritamente 1 vez)
+                    task.spawn(function()
+                        task.wait(ConfigModule.Settings.SellDelaySeconds)
+                        if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell and ConfigModule.Settings.AutoSell then
+                            SharedState.HasExecutedSell = true
+                            AutoSellModule.Execute()
                         end
                     end)
                 end
@@ -992,7 +1005,6 @@ task.spawn(function()
                     CharacterModule.StopMovement()
 
                     if ConfigModule.Settings.AutoClaimQuests then pcall(QuestModule.ClaimAll) end
-                    if ConfigModule.Settings.AutoSell then pcall(AutoSellModule.Execute) end
 
                     if ConfigModule.Settings.AutoEngage and DungeonStateModule.CheckEngage() then
                         SharedState.IsDungeonEnded = false
@@ -1051,6 +1063,7 @@ local Window = Fluent:CreateWindow({
 
 local Tabs = {
     Farm = Window:AddTab({ Title = "Farm" }),
+    Sell = Window:AddTab({ Title = "Auto-Sell" }),
     Settings = Window:AddTab({ Title = "Settings" })
 }
 
@@ -1124,7 +1137,7 @@ task.spawn(function()
     end
 end)
 
--- Componentes da UI
+-- ABA FARM
 local PhaseSection = Tabs.Farm:AddSection("Configurações de Fase & Posição")
 PhaseSection:AddDropdown("PhaseSelector", {
     Title = "Selecionar Fase",
@@ -1245,38 +1258,55 @@ CombatSection:AddSlider("SkillCooldownSlider", {
     Callback = function(Value) ConfigModule.Settings.SkillCooldown = Value ConfigModule.Save() end
 })
 
--- ABA SETTINGS
-local SellSection = Tabs.Settings:AddSection("Auto-Sell (Venda Automática)")
-SellSection:AddToggle("AutoSellToggle", {
+-- ABA AUTO-SELL
+local SellMainSection = Tabs.Sell:AddSection("Controle Geral de Venda")
+SellMainSection:AddToggle("AutoSellToggle", {
     Title = "Ativar Auto-Sell",
+    Description = "Vende automaticamente 1 vez logo após iniciar a dungeon",
     Default = ConfigModule.Settings.AutoSell,
     Callback = function(Value) ConfigModule.Settings.AutoSell = Value ConfigModule.Save() end
 })
-SellSection:AddToggle("SellRareToggle", {
+SellMainSection:AddSlider("SellDelaySlider", {
+    Title = "Tempo pós-início para Vender (s)",
+    Description = "Quantos segundos esperar após entrar na fase para disparar a venda única",
+    Default = ConfigModule.Settings.SellDelaySeconds,
+    Min = 1, Max = 30, Rounding = 0,
+    Callback = function(Value) ConfigModule.Settings.SellDelaySeconds = Value ConfigModule.Save() end
+})
+SellMainSection:AddButton({
+    Title = "💰 Executar Venda Imediata",
+    Description = "Varre o inventário e vende os itens configurados agora",
+    Callback = function() pcall(AutoSellModule.Execute) end
+})
+
+local SellRaritiesSection = Tabs.Sell:AddSection("Filtro de Raridades para Venda")
+SellRaritiesSection:AddToggle("SellCommonToggle", {
+    Title = "Vender Comuns",
+    Default = ConfigModule.Settings.SellCommon,
+    Callback = function(Value) ConfigModule.Settings.SellCommon = Value ConfigModule.Save() end
+})
+SellRaritiesSection:AddToggle("SellRareToggle", {
     Title = "Vender Raros",
     Default = ConfigModule.Settings.SellRare,
     Callback = function(Value) ConfigModule.Settings.SellRare = Value ConfigModule.Save() end
 })
-SellSection:AddToggle("SellEpicToggle", {
+SellRaritiesSection:AddToggle("SellEpicToggle", {
     Title = "Vender Épicos",
     Default = ConfigModule.Settings.SellEpic,
     Callback = function(Value) ConfigModule.Settings.SellEpic = Value ConfigModule.Save() end
 })
-SellSection:AddToggle("SellLegendaryToggle", {
+SellRaritiesSection:AddToggle("SellLegendaryToggle", {
     Title = "Vender Lendários",
     Default = ConfigModule.Settings.SellLegendary,
     Callback = function(Value) ConfigModule.Settings.SellLegendary = Value ConfigModule.Save() end
 })
-SellSection:AddToggle("SellMythicToggle", {
+SellRaritiesSection:AddToggle("SellMythicToggle", {
     Title = "Vender Míticos",
     Default = ConfigModule.Settings.SellMythic,
     Callback = function(Value) ConfigModule.Settings.SellMythic = Value ConfigModule.Save() end
 })
-SellSection:AddButton({
-    Title = "💰 Executar Venda Agora",
-    Callback = function() pcall(AutoSellModule.Execute) end
-})
 
+-- ABA SETTINGS
 local QuestsSection = Tabs.Settings:AddSection("Automação de Missões (Quests)")
 QuestsSection:AddToggle("AutoClaimQuestsToggle", {
     Title = "Auto-Claim de Missões (10s pós-início)",
