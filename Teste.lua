@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FIX DETECÇÃO DE ARMA & UI CLEAN)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-QUEST SILENCIOSO & COMPLETO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -295,11 +295,18 @@ end
 function CharacterModule.TriggerButton(btn)
     if not btn or not SharedState.IsRunning then return end
     pcall(function()
-        for _, evName in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
-            if btn[evName] and firesignal then firesignal(btn[evName]) end
-            if btn[evName] and getconnections then
-                for _, c in ipairs(getconnections(btn[evName])) do c:Fire() end
+        if getconnections then
+            for _, evName in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
+                if btn[evName] then
+                    for _, c in ipairs(getconnections(btn[evName])) do c:Fire() end
+                end
             end
+        end
+        if firesignal then
+            if btn.Activated then firesignal(btn.Activated) end
+            if btn.MouseButton1Click then firesignal(btn.MouseButton1Click) end
+            if btn.MouseButton1Down then firesignal(btn.MouseButton1Down) end
+            if btn.MouseButton1Up then firesignal(btn.MouseButton1Up) end
         end
     end)
 end
@@ -409,14 +416,13 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 5. MÓDULO DE COMBATE & DETECÇÃO DE ARMA EXATA ]]
+-- [[ 5. MÓDULO DE COMBATE & DETECÇÃO DE ARMA ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local lastSkillUse = 0
 local comboIndex = 1
 
 function CombatModule.DetectEquippedWeapon()
-    -- 1. Varredura no frame de equipamentos (Slots oficiais da UI)
     local main = pgui:FindFirstChild("Main")
     local mainFrame = main and main:FindFirstChild("MainFrame")
     local itemsFrame = mainFrame and mainFrame:FindFirstChild("Items")
@@ -435,7 +441,6 @@ function CombatModule.DetectEquippedWeapon()
         end
     end
 
-    -- 2. Varredura precisa no Scroll (busca especificamente por Type == "Weapon" e Equipped == true)
     local scroll = itemsFrame and itemsFrame:FindFirstChild("Scroll")
     if scroll then
         for _, slot in ipairs(scroll:GetChildren()) do
@@ -444,11 +449,9 @@ function CombatModule.DetectEquippedWeapon()
                 if itemObj and itemObj.Parent then
                     local isEquipped = itemObj:GetAttribute("Equipped") == true
                     local itemType = tostring(itemObj:GetAttribute("Type") or ""):lower()
-                    
                     local eqVisual = slot:FindFirstChild("EquippedSelection")
                     local isVisuallyEquipped = eqVisual and eqVisual:IsA("GuiObject") and eqVisual.Visible
 
-                    -- Ignora qualquer acessório, armadura ou máscara
                     local nameLower = itemObj.Name:lower()
                     local isArmor = itemType:find("armor") or nameLower:find("mask") or nameLower:find("ring") or nameLower:find("necklace") or nameLower:find("hat") or nameLower:find("cape")
 
@@ -460,7 +463,6 @@ function CombatModule.DetectEquippedWeapon()
         end
     end
 
-    -- 3. Fallback no Character / Backpack
     local char = player.Character
     if char then
         local tool = char:FindFirstChildOfClass("Tool")
@@ -680,30 +682,31 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE QUESTS ]]
+-- [[ 7. MÓDULO DE QUESTS (100% INVISÍVEL & SEGUNDO PLANO) ]]
 local QuestModule = {}
-local questRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Quest", 10)
 local lastQuestTick = 0
 
 function QuestModule.ClaimAll()
     if not ConfigModule.Settings.AutoClaimQuests or SharedState.IsClaiming or not SharedState.IsRunning then return end
-    if (tick() - lastQuestTick) < 10 then return end
+    if (tick() - lastQuestTick) < 6 then return end
 
     SharedState.IsClaiming = true
     lastQuestTick = tick()
 
-    local questsFrame = pgui and pgui:FindFirstChild("Main")
-        and pgui.Main:FindFirstChild("MainFrame")
-        and pgui.Main.MainFrame:FindFirstChild("Quests")
-
+    local main = pgui and pgui:FindFirstChild("Main")
+    local mainFrame = main and main:FindFirstChild("MainFrame")
+    local questsFrame = mainFrame and mainFrame:FindFirstChild("Quests")
     local questsHolder = questsFrame and questsFrame:FindFirstChild("QuestsHolder")
     local claimBtn = questsFrame and questsFrame:FindFirstChild("Information") and questsFrame.Information:FindFirstChild("Claim")
     local buttonsFolder = questsFrame and questsFrame:FindFirstChild("Buttons")
 
-    if not questsFrame or not questsHolder or not claimBtn or not buttonsFolder then
+    if not questsFrame or not questsHolder or not buttonsFolder then
         SharedState.IsClaiming = false
         return
     end
+
+    local originalVisible = questsFrame.Visible
+    questsFrame.Visible = false
 
     local tabs = {
         buttonsFolder:FindFirstChild("Hourly"),
@@ -716,30 +719,23 @@ function QuestModule.ClaimAll()
     for _, tabBtn in ipairs(tabs) do
         if tabBtn then
             CharacterModule.TriggerButton(tabBtn)
-            task.wait(0.15)
+            task.wait(0.25)
 
             for _, slot in ipairs(questsHolder:GetChildren()) do
                 if slot:IsA("ImageButton") or slot:IsA("GuiButton") then
                     local progressLabel = slot:FindFirstChild("QuestProgress", true)
                     if progressLabel and progressLabel:IsA("TextLabel") then
                         local txt = progressLabel.Text:lower()
-                        if txt == "claim" or txt == "resgatar" or txt == "completed" then
+                        if txt:find("claim") or txt:find("resgatar") or txt:find("completed") then
                             CharacterModule.TriggerButton(slot)
-                            task.wait(0.08)
-                            CharacterModule.TriggerButton(claimBtn)
+                            task.wait(0.1)
 
-                            if questRemote then
-                                pcall(function()
-                                    local selObj = slot:FindFirstChild("SelectedQuest")
-                                    if selObj and selObj.Value then
-                                        questRemote:FireServer("Claim", selObj.Value)
-                                    end
-                                    questRemote:FireServer("Claim", slot.Name)
-                                end)
+                            if claimBtn then
+                                CharacterModule.TriggerButton(claimBtn)
                             end
 
                             claimedCount = claimedCount + 1
-                            task.wait(0.12)
+                            task.wait(0.15)
                         end
                     end
                 end
@@ -747,10 +743,12 @@ function QuestModule.ClaimAll()
         end
     end
 
+    questsFrame.Visible = originalVisible
+
     if claimedCount > 0 then
         Fluent:Notify({
             Title = "Quests Concluídas",
-            Content = string.format("%d missões resgatadas com sucesso!", claimedCount),
+            Content = string.format("%d missões resgatadas silenciosamente!", claimedCount),
             Duration = 3.5
         })
     end
@@ -1089,7 +1087,7 @@ task.spawn(function()
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
                     
-                    -- Auto-Claim Quests (Execução única)
+                    -- Auto-Claim Quests (Execução única silenciosa no tempo configurado)
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.ClaimDelaySeconds)
                         if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedQuests and ConfigModule.Settings.AutoClaimQuests then
@@ -1098,7 +1096,7 @@ task.spawn(function()
                         end
                     end)
 
-                    -- Auto-Sell e Auto-Favorite (Execução única)
+                    -- Auto-Sell e Auto-Favorite (Execução única no tempo configurado)
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.SellDelaySeconds)
                         if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell then
@@ -1444,7 +1442,7 @@ SellRaritiesSection:AddToggle("SellMythicToggle", {
 local QuestsSection = Tabs.Settings:AddSection("Automação de Missões (Quests)")
 QuestsSection:AddToggle("AutoClaimQuestsToggle", {
     Title = "Auto-Claim de Missões",
-    Description = "Resgata automaticamente as missões concluídas",
+    Description = "Resgata automaticamente as missões concluídas em segundo plano",
     Default = ConfigModule.Settings.AutoClaimQuests,
     Callback = function(Value) ConfigModule.Settings.AutoClaimQuests = Value ConfigModule.Save() end
 })
@@ -1456,7 +1454,7 @@ QuestsSection:AddSlider("ClaimDelaySlider", {
 })
 QuestsSection:AddButton({
     Title = "⚡ Resgatar Missões Agora",
-    Description = "Varre Hourly, Daily e Weekly resgatando o que estiver pronto",
+    Description = "Varre Hourly, Daily e Weekly resgatando o que estiver pronto silenciosamente",
     Callback = function() pcall(QuestModule.ClaimAll) end
 })
 
