@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (100% BLINDADO CONTRA MOVIMENTO SUSPEITO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (COM DISCORD WEBHOOK INTEGRADO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -77,6 +77,7 @@ local SharedState = {
     IsDungeonEnded = false,
     HasExecutedSell = false,
     HasExecutedQuests = false,
+    HasSentWebhook = false,
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
@@ -116,7 +117,13 @@ ConfigModule.Settings = {
     SellRare = true,
     SellEpic = true,
     SellLegendary = true,
-    SellMythic = false
+    SellMythic = false,
+    -- Configurações Discord Webhook
+    WebhookEnabled = false,
+    WebhookURL = "",
+    NotifySecrets = true,
+    NotifyMythics = true,
+    NotifyEveryRun = false
 }
 
 local CONFIG_FILE = "HubRapazes_Config.json"
@@ -145,7 +152,91 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
+-- [[ 3. MÓDULO DE DISCORD WEBHOOK ]]
+local WebhookModule = {}
+
+function WebhookModule.Send(payloadTable)
+    if not ConfigModule.Settings.WebhookEnabled or ConfigModule.Settings.WebhookURL == "" then return end
+    
+    local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+    if not httpRequest then return end
+
+    pcall(function()
+        httpRequest({
+            Url = ConfigModule.Settings.WebhookURL,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = HttpService:JSONEncode(payloadTable)
+        })
+    end)
+end
+
+function WebhookModule.ProcessDungeonDrops()
+    if SharedState.HasSentWebhook or not ConfigModule.Settings.WebhookEnabled then return end
+    
+    local df = pgui and pgui:FindFirstChild("Main") and pgui.Main:FindFirstChild("DungeonFrame")
+    local stats = df and df:FindFirstChild("DungeonStats")
+    local rewardedHolder = stats and stats:FindFirstChild("RewardedHolder")
+
+    if not rewardedHolder then return end
+
+    local droppedItems = {}
+    local hasSecret = false
+    local hasMythic = false
+
+    for _, child in ipairs(rewardedHolder:GetChildren()) do
+        if child:IsA("Frame") or child:IsA("ImageLabel") or child:IsA("GuiObject") then
+            local itemName = child.Name
+            local itemVal = child:FindFirstChild("Item")
+            if itemVal and itemVal:IsA("ObjectValue") and itemVal.Value then
+                itemName = itemVal.Value.Name
+                local r = tostring(itemVal.Value:GetAttribute("Rarity") or ""):lower()
+                if r:find("secret") then hasSecret = true end
+                if r:find("mythic") then hasMythic = true end
+            end
+
+            local chanceLabel = child:FindFirstChild("DropChance")
+            local chanceTxt = (chanceLabel and chanceLabel:IsA("TextLabel")) and chanceLabel.Text or ""
+
+            table.insert(droppedItems, string.format("• **%s** %s", itemName, chanceTxt ~= "" and ("(" .. chanceTxt .. ")") or ""))
+        end
+    end
+
+    local shouldNotify = false
+    if ConfigModule.Settings.NotifyEveryRun then
+        shouldNotify = true
+    elseif ConfigModule.Settings.NotifySecrets and hasSecret then
+        shouldNotify = true
+    elseif ConfigModule.Settings.NotifyMythics and hasMythic then
+        shouldNotify = true
+    end
+
+    if shouldNotify then
+        SharedState.HasSentWebhook = true
+        
+        local dropsText = #droppedItems > 0 and table.concat(droppedItems, "\n") or "Nenhum item especial"
+        local embedColor = hasSecret and 16711680 or (hasMythic and 16744192 or 65450)
+
+        local embed = {
+            ["title"] = "⚔️ Dungeon Concluída - " .. tostring(ConfigModule.Settings.SelectedPhase),
+            ["color"] = embedColor,
+            ["fields"] = {
+                { ["name"] = "👤 Jogador", ["value"] = player.Name, ["inline"] = true },
+                { ["name"] = "🗺️ Fase", ["value"] = ConfigModule.Settings.SelectedPhase, ["inline"] = true },
+                { ["name"] = "🎁 Drops da Partida", ["value"] = dropsText, ["inline"] = false }
+            },
+            ["footer"] = { ["text"] = "Hub dos Rapazes • " .. os.date("%X") }
+        }
+
+        WebhookModule.Send({
+            ["username"] = "Hub dos Rapazes Bot",
+            ["avatar_url"] = "https://i.imgur.com/8Qf9Z2N.png",
+            ["embeds"] = { embed }
+        })
+    end
+end
+
+-- [[ 4. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -181,7 +272,6 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        -- Torque exclusivo no eixo Y para evitar pitch perigoso
         bg.MaxTorque = Vector3.new(0, 4e5, 0)
         bg.P = 15000
         bg.D = 300
@@ -283,7 +373,6 @@ function CharacterModule.FlyToEnemy(targetPart)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    -- Mira horizontal pura no plano X/Z
     local flatTarget = Vector3.new(enemyPos.X, root.Position.Y, enemyPos.Z)
     if (flatTarget - root.Position).Magnitude > 0.1 then
         bg.CFrame = CFrame.lookAt(root.Position, flatTarget)
@@ -345,15 +434,13 @@ function CharacterModule.PressKey(keyCode)
     end)
 end
 
--- [[ 4. MÓDULO DE DETECÇÃO DE INIMIGOS ]]
+-- [[ 5. MÓDULO DE DETECÇÃO DE INIMIGOS ]]
 local TargetingModule = {}
 
 function TargetingModule.IsAlive(obj)
     if not obj or not obj.Parent then return false end
     local hum = obj:FindFirstChildOfClass("Humanoid")
-    if hum then 
-        return (hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead) 
-    end
+    if hum then return (hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead) end
     local hpAttr = obj:GetAttribute("Health") or obj:GetAttribute("HP")
     if hpAttr then return tonumber(hpAttr) > 0 end
     local hpVal = obj:FindFirstChild("Health") or obj:FindFirstChild("HP")
@@ -442,7 +529,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 5. MÓDULO DE COMBATE & DETECÇÃO DE ARMA ]]
+-- [[ 6. MÓDULO DE COMBATE & DETECÇÃO DE ARMA ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local lastSkillUse = 0
@@ -571,7 +658,7 @@ function CombatModule.ExecuteSkills()
     end
 end
 
--- [[ 6. MÓDULO DE AUTO-SELL & AUTO-FAVORITE ]]
+-- [[ 7. MÓDULO DE AUTO-SELL & AUTO-FAVORITE ]]
 local AutoSellModule = {}
 local equipRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Equip", 10)
 local lastSellTick = 0
@@ -718,7 +805,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 7. MÓDULO DE QUESTS (PRECISÃO DE CONTAGEM & SILENCIOSO) ]]
+-- [[ 8. MÓDULO DE QUESTS ]]
 local QuestModule = {}
 local lastQuestTick = 0
 
@@ -798,7 +885,7 @@ function QuestModule.ClaimAll()
     SharedState.IsClaiming = false
 end
 
--- [[ 8. MÓDULO DE FLUXO & PORTAIS ]]
+-- [[ 9. MÓDULO DE FLUXO & PORTAIS ]]
 local FlowModule = {}
 
 local BLEACH_PORTAL_1 = CFrame.new(4557.2, -305.5, 1925.0)
@@ -1029,7 +1116,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- [[ 9. MÓDULO DE ESTADOS DA DUNGEON ]]
+-- [[ 10. MÓDULO DE ESTADOS DA DUNGEON ]]
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
@@ -1106,13 +1193,14 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     SharedState.IsRespawning = true
     SharedState.IsTransitioning = false
     SharedState.EnteringPortal = false
+    SharedState.HasSentWebhook = false
     SharedState.LastRoomState = "Room1"
     CharacterModule.StopMovement()
     bindCharacterEvents(newChar)
     task.delay(0.8, function() SharedState.IsRespawning = false end)
 end)
 
--- [[ 10. MOTOR PRINCIPAL DE LOOPS ]]
+-- [[ 11. MOTOR PRINCIPAL DE LOOPS ]]
 local initialRoutinesScheduled = false
 
 task.spawn(function()
@@ -1173,6 +1261,9 @@ task.spawn(function()
                     SharedState.IsVirusActive = false
                     CharacterModule.StopMovement()
 
+                    -- Disparo do Webhook no fim da partida
+                    pcall(WebhookModule.ProcessDungeonDrops)
+
                     if ConfigModule.Settings.AutoEngage and DungeonStateModule.CheckEngage() then
                         SharedState.IsDungeonEnded = false
                         SharedState.IsVirusActive = true
@@ -1214,7 +1305,7 @@ task.spawn(function()
     end
 end)
 
--- [[ 11. INTERFACE VISUAL ]]
+-- [[ 12. INTERFACE VISUAL ]]
 local UIModule = {}
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
@@ -1231,6 +1322,7 @@ local Window = Fluent:CreateWindow({
 local Tabs = {
     Farm = Window:AddTab({ Title = "Farm" }),
     Sell = Window:AddTab({ Title = "Auto-Sell" }),
+    Webhook = Window:AddTab({ Title = "Discord" }),
     Settings = Window:AddTab({ Title = "Settings" })
 }
 
@@ -1490,6 +1582,59 @@ SellRaritiesSection:AddToggle("SellMythicToggle", {
     Title = "Vender Míticos",
     Default = ConfigModule.Settings.SellMythic,
     Callback = function(Value) ConfigModule.Settings.SellMythic = Value ConfigModule.Save() end
+})
+
+-- ABA WEBHOOK DISCORD
+local WebhookSection = Tabs.Webhook:AddSection("Configuração do Webhook")
+WebhookSection:AddToggle("WebhookEnableToggle", {
+    Title = "Ativar Notificações no Discord",
+    Default = ConfigModule.Settings.WebhookEnabled,
+    Callback = function(Value) ConfigModule.Settings.WebhookEnabled = Value ConfigModule.Save() end
+})
+local WebhookInput = WebhookSection:AddInput("WebhookURLBox", {
+    Title = "URL do Webhook Discord",
+    Default = ConfigModule.Settings.WebhookURL,
+    Placeholder = "Cole o link https://discord.com/api/webhooks/...",
+    Finished = true,
+    Callback = function(Value) ConfigModule.Settings.WebhookURL = Value ConfigModule.Save() end
+})
+WebhookSection:AddButton({
+    Title = "🧪 Testar Envio no Discord",
+    Description = "Envia uma mensagem de teste imediata para verificar seu link",
+    Callback = function()
+        if ConfigModule.Settings.WebhookURL ~= "" then
+            WebhookModule.Send({
+                ["username"] = "Hub dos Rapazes Bot",
+                ["avatar_url"] = "https://i.imgur.com/8Qf9Z2N.png",
+                ["embeds"] = {{
+                    ["title"] = "✅ Webhook Conectado com Sucesso!",
+                    ["description"] = "As notificações de drops raros estão ativas.",
+                    ["color"] = 65450,
+                    ["footer"] = { ["text"] = "Hub dos Rapazes • Teste" }
+                }}
+            })
+            Fluent:Notify({ Title = "Webhook", Content = "Mensagem de teste enviada!", Duration = 4 })
+        else
+            Fluent:Notify({ Title = "Erro", Content = "Cole a URL do webhook primeiro.", Duration = 4 })
+        end
+    end
+})
+
+local WebhookFilters = Tabs.Webhook:AddSection("Filtros de Alerta")
+WebhookFilters:AddToggle("NotifySecretsToggle", {
+    Title = "Avisar Drops Secretos",
+    Default = ConfigModule.Settings.NotifySecrets,
+    Callback = function(Value) ConfigModule.Settings.NotifySecrets = Value ConfigModule.Save() end
+})
+WebhookFilters:AddToggle("NotifyMythicsToggle", {
+    Title = "Avisar Drops Míticos",
+    Default = ConfigModule.Settings.NotifyMythics,
+    Callback = function(Value) ConfigModule.Settings.NotifyMythics = Value ConfigModule.Save() end
+})
+WebhookFilters:AddToggle("NotifyEveryRunToggle", {
+    Title = "Avisar Todas as Runs (Resumo Geral)",
+    Default = ConfigModule.Settings.NotifyEveryRun,
+    Callback = function(Value) ConfigModule.Settings.NotifyEveryRun = Value ConfigModule.Save() end
 })
 
 -- ABA SETTINGS
