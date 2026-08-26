@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FÍSICA ORIGINAL SEGURA + DISCORD + AUTO-SELL)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (WEBHOOK PADRÃO CONFIGURADO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -113,9 +113,9 @@ ConfigModule.Settings = {
     SellEpic = true,
     SellLegendary = true,
     SellMythic = false,
-    -- Configurações Discord Webhook
-    WebhookEnabled = false,
-    WebhookURL = "",
+    -- Configurações Discord Webhook Padrão
+    WebhookEnabled = true,
+    WebhookURL = "https://discord.com/api/webhooks/1542138848195248258/Xqpgk33GsjM5UrMxT0IqIvkKvKulvSJQVc6CSuPmrf6lmrjNXwjxCwGCOK0aJun-Y83o",
     NotifySecrets = true,
     NotifyMythics = true,
     NotifyEveryRun = false
@@ -231,7 +231,7 @@ function WebhookModule.ProcessDungeonDrops()
     end
 end
 
--- [[ 4. MÓDULO DE PERSONAGEM & FÍSICA (CÓDIGO ORIGINAL SEGURO) ]]
+-- [[ 4. MÓDULO DE PERSONAGEM & FÍSICA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -521,7 +521,10 @@ function CombatModule.DetectWeapon()
     local char = player.Character
     if char and char:FindFirstChildOfClass("Tool") then return char:FindFirstChildOfClass("Tool").Name end
     local bp = player:FindFirstChild("Backpack")
-    if bp and bp:FindFirstChildOfClass("Tool") then return bp:FindFirstChildOfClass("Tool").Name end
+    if bp then
+        local tool = bp:FindFirstChildOfClass("Tool")
+        if tool then return tool.Name end
+    end
     return nil
 end
 
@@ -1293,7 +1296,7 @@ task.spawn(function()
     end
 end)
 
--- Componentes da UI (Aba Farm)
+-- ABA FARM
 local PhaseSection = Tabs.Farm:AddSection("Configurações de Fase & Posição")
 PhaseSection:AddDropdown("PhaseSelector", {
     Title = "Selecionar Fase",
@@ -1414,7 +1417,7 @@ CombatSection:AddSlider("SkillCooldownSlider", {
     Callback = function(Value) ConfigModule.Settings.SkillCooldown = Value ConfigModule.Save() end
 })
 
--- Componentes da UI (Aba Auto-Sell & Favorite)
+-- ABA AUTO-SELL & FAVORITE
 local FavoriteSection = Tabs.Sell:AddSection("Proteção de Itens (Auto-Favorite)")
 FavoriteSection:AddToggle("AutoFavSecretsToggle", {
     Title = "Auto-Favorite Secretos",
@@ -1481,7 +1484,7 @@ SellRaritiesSection:AddToggle("SellMythicToggle", {
     Callback = function(Value) ConfigModule.Settings.SellMythic = Value ConfigModule.Save() end
 })
 
--- Componentes da UI (Aba Webhook Discord)
+-- ABA WEBHOOK DISCORD
 local WebhookSection = Tabs.Webhook:AddSection("Configuração do Webhook")
 WebhookSection:AddToggle("WebhookEnableToggle", {
     Title = "Ativar Notificações no Discord",
@@ -1534,7 +1537,7 @@ WebhookFilters:AddToggle("NotifyEveryRunToggle", {
     Callback = function(Value) ConfigModule.Settings.NotifyEveryRun = Value ConfigModule.Save() end
 })
 
--- Componentes da UI (Aba Settings)
+-- ABA SETTINGS
 local QuestsSection = Tabs.Settings:AddSection("Automação de Missões (Quests)")
 QuestsSection:AddToggle("AutoClaimQuestsToggle", {
     Title = "Auto-Claim de Missões (13s pós-início)",
