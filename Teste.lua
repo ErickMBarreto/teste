@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FIX BUSCA CONTÍNUA DE INIMIGOS)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (100% BLINDADO CONTRA MOVIMENTO SUSPEITO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -100,9 +100,9 @@ ConfigModule.Settings = {
     StartWaitTime = 2.0,
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
-    HeightAboveEnemy = 8.5,
-    BackDistance = 6.0,
-    TweenSpeed = 90,
+    HeightAboveEnemy = 8.0,
+    BackDistance = 5.5,
+    TweenSpeed = 75,
     AttackSpeed = 0.15,
     -- Configurações Quests
     AutoClaimQuests = true,
@@ -145,7 +145,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA ]]
+-- [[ 3. MÓDULO DE PERSONAGEM & FÍSICA SEGURA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -172,7 +172,7 @@ local function getFlightBody(root)
     if not bv then
         bv = Instance.new("BodyVelocity")
         bv.Name = "HubFlightForce"
-        bv.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        bv.MaxForce = Vector3.new(4e4, 4e4, 4e4)
         bv.Velocity = Vector3.zero
         bv.Parent = root
     end
@@ -181,9 +181,10 @@ local function getFlightBody(root)
     if not bg then
         bg = Instance.new("BodyGyro")
         bg.Name = "HubFlightGyro"
-        bg.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-        bg.P = 30000
-        bg.D = 100
+        -- Torque exclusivo no eixo Y para evitar pitch perigoso
+        bg.MaxTorque = Vector3.new(0, 4e5, 0)
+        bg.P = 15000
+        bg.D = 300
         bg.Parent = root
     end
 
@@ -261,14 +262,10 @@ function CharacterModule.FlyToEnemy(targetPart)
     end
 
     local mode = ConfigModule.Settings.PositionMode
-    local targetPos, targetCFrame
+    local targetPos
 
     if mode == "Em Cima da Cabeça" then
         targetPos = Vector3.new(enemyPos.X, enemyPos.Y + ConfigModule.Settings.HeightAboveEnemy, enemyPos.Z)
-        local lookDir = (enemyPos - targetPos).Unit
-        local rightDir = Vector3.new(1, 0, 0)
-        local upDir = rightDir:Cross(lookDir).Unit
-        targetCFrame = CFrame.fromMatrix(root.Position, rightDir, upDir, -lookDir)
     elseif mode == "Nas Costas" then
         local enemyLook = targetPart.CFrame.LookVector
         local flatLook = Vector3.new(enemyLook.X, 0, enemyLook.Z)
@@ -277,25 +274,27 @@ function CharacterModule.FlyToEnemy(targetPart)
         else
             flatLook = Vector3.new(0, 0, 1)
         end
-        
         targetPos = enemyPos - (flatLook * ConfigModule.Settings.BackDistance) + Vector3.new(0, 1.5, 0)
-        targetCFrame = CFrame.lookAt(root.Position, enemyPos + Vector3.new(0, 0.5, 0))
     else
         targetPos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0)
-        targetCFrame = CFrame.lookAt(root.Position, enemyPos)
     end
 
     local bv, bg = getFlightBody(root)
     local diff = targetPos - root.Position
     local dist = diff.Magnitude
 
-    bg.CFrame = targetCFrame
+    -- Mira horizontal pura no plano X/Z
+    local flatTarget = Vector3.new(enemyPos.X, root.Position.Y, enemyPos.Z)
+    if (flatTarget - root.Position).Magnitude > 0.1 then
+        bg.CFrame = CFrame.lookAt(root.Position, flatTarget)
+    end
 
-    if dist <= 1.2 then
+    if dist <= 1.5 then
         bv.Velocity = Vector3.new(0, 0.05, 0)
     else
-        local speed = math.clamp(ConfigModule.Settings.TweenSpeed, 25, 120)
-        bv.Velocity = diff.Unit * math.clamp(dist * 9, 20, speed)
+        local maxSpeed = math.clamp(ConfigModule.Settings.TweenSpeed, 20, 85)
+        local targetVelocity = diff.Unit * math.clamp(dist * 7, 15, maxSpeed)
+        bv.Velocity = bv.Velocity:Lerp(targetVelocity, 0.25)
     end
 end
 
@@ -346,31 +345,19 @@ function CharacterModule.PressKey(keyCode)
     end)
 end
 
--- [[ 4. MÓDULO DE DETECÇÃO DE INIMIGOS (PRECISO E RESILIENTE) ]]
+-- [[ 4. MÓDULO DE DETECÇÃO DE INIMIGOS ]]
 local TargetingModule = {}
 
 function TargetingModule.IsAlive(obj)
     if not obj or not obj.Parent then return false end
-    
     local hum = obj:FindFirstChildOfClass("Humanoid")
     if hum then 
-        if hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead then
-            return false
-        end
-        return true
+        return (hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead) 
     end
-
     local hpAttr = obj:GetAttribute("Health") or obj:GetAttribute("HP")
-    if hpAttr then 
-        return tonumber(hpAttr) > 0 
-    end
-
+    if hpAttr then return tonumber(hpAttr) > 0 end
     local hpVal = obj:FindFirstChild("Health") or obj:FindFirstChild("HP")
-    if hpVal and hpVal:IsA("ValueBase") then 
-        return tonumber(hpVal.Value) > 0 
-    end
-
-    -- Se o Model estiver dentro das pastas de inimigos e não for jogador, considera vivo
+    if hpVal and hpVal:IsA("ValueBase") then return tonumber(hpVal.Value) > 0 end
     return true
 end
 
@@ -415,17 +402,12 @@ function TargetingModule.GetLivingEnemies(phase)
     for _, container in ipairs(searchContainers) do
         if container then
             for _, desc in ipairs(container:GetDescendants()) do
-                if desc:IsA("Model") then 
-                    addEntity(desc) 
-                end
+                if desc:IsA("Model") then addEntity(desc) end
             end
-            if container:IsA("Model") then
-                addEntity(container)
-            end
+            if container:IsA("Model") then addEntity(container) end
         end
     end
 
-    -- Varredura de contingência geral no workspace.Game caso as pastas tenham nomes dinâmicos
     if #list == 0 and gameFolder then
         for _, child in ipairs(gameFolder:GetChildren()) do
             if child:IsA("Model") and child ~= char and not Players:GetPlayerFromCharacter(child) then
@@ -964,7 +946,6 @@ function FlowModule.RunBleach()
     if enemyPart then
         CharacterModule.FlyToEnemy(enemyPart)
     else
-        -- Se não achou inimigo, mas está na hora do portal, força o avanço
         if wave >= 8 and currentRoom == "Room1" then
             FlowModule.PassPortal(BLEACH_PORTAL_1)
         elseif wave >= 12 and currentRoom ~= "BossRoom" then
@@ -1385,7 +1366,7 @@ CombatSection:AddSlider("BackDistance", {
 CombatSection:AddSlider("TweenSpeed", {
     Title = "Velocidade do Voo",
     Default = ConfigModule.Settings.TweenSpeed,
-    Min = 20, Max = 120, Rounding = 0,
+    Min = 20, Max = 100, Rounding = 0,
     Callback = function(Value) ConfigModule.Settings.TweenSpeed = Value ConfigModule.Save() end
 })
 CombatSection:AddToggle("HardcoreToggle", {
