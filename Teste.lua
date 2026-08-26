@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FIX TRAVAMENTO & TARGETING FLUIDO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FIX BUSCA CONTÍNUA DE INIMIGOS)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -234,11 +234,10 @@ function CharacterModule.FlyToEnemy(targetPart)
         return 
     end
 
-    -- Watchdog anti-travamento de estados
-    if SharedState.IsTransitioning and (tick() - SharedState.TransitionStart) > 2.5 then
+    if SharedState.IsTransitioning and (tick() - SharedState.TransitionStart) > 2.0 then
         SharedState.IsTransitioning = false
     end
-    if SharedState.EnteringPortal and (tick() - SharedState.LastPortalAttempt) > 3.5 then
+    if SharedState.EnteringPortal and (tick() - SharedState.LastPortalAttempt) > 3.0 then
         SharedState.EnteringPortal = false
     end
 
@@ -250,7 +249,6 @@ function CharacterModule.FlyToEnemy(targetPart)
         return 
     end
 
-    -- Cancela qualquer interpolação residual de Tween ativa
     if SharedState.CurrentTween then
         SharedState.CurrentTween:Cancel()
         SharedState.CurrentTween = nil
@@ -348,20 +346,32 @@ function CharacterModule.PressKey(keyCode)
     end)
 end
 
--- [[ 4. MÓDULO DE DETECÇÃO DE INIMIGOS (RECURSIVO & ROBUSTO) ]]
+-- [[ 4. MÓDULO DE DETECÇÃO DE INIMIGOS (PRECISO E RESILIENTE) ]]
 local TargetingModule = {}
 
 function TargetingModule.IsAlive(obj)
     if not obj or not obj.Parent then return false end
+    
     local hum = obj:FindFirstChildOfClass("Humanoid")
     if hum then 
-        return (hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead) 
+        if hum.Health <= 0 or hum:GetState() == Enum.HumanoidStateType.Dead then
+            return false
+        end
+        return true
     end
+
     local hpAttr = obj:GetAttribute("Health") or obj:GetAttribute("HP")
-    if hpAttr then return tonumber(hpAttr) > 0 end
+    if hpAttr then 
+        return tonumber(hpAttr) > 0 
+    end
+
     local hpVal = obj:FindFirstChild("Health") or obj:FindFirstChild("HP")
-    if hpVal and hpVal:IsA("ValueBase") then return tonumber(hpVal.Value) > 0 end
-    return false
+    if hpVal and hpVal:IsA("ValueBase") then 
+        return tonumber(hpVal.Value) > 0 
+    end
+
+    -- Se o Model estiver dentro das pastas de inimigos e não for jogador, considera vivo
+    return true
 end
 
 function TargetingModule.GetTargetPart(obj)
@@ -391,37 +401,36 @@ function TargetingModule.GetLivingEnemies(phase)
     end
 
     local gameFolder = workspace:FindFirstChild("Game")
-    local enemiesFolder = (gameFolder and gameFolder:FindFirstChild("Enemies")) or workspace:FindFirstChild("Enemies")
-    
-    -- Varredura profunda para capturar mobs mesmo se estiverem agrupados em subpastas
-    if enemiesFolder then
-        for _, desc in ipairs(enemiesFolder:GetDescendants()) do
-            if desc:IsA("Model") then addEntity(desc) end
-        end
-    end
+    local searchContainers = {
+        gameFolder and gameFolder:FindFirstChild("Enemies"),
+        workspace:FindFirstChild("Enemies"),
+        gameFolder and gameFolder:FindFirstChild("Stages"),
+        gameFolder and gameFolder:FindFirstChild("Spawns"),
+        gameFolder and gameFolder:FindFirstChild("Virus"),
+        gameFolder and gameFolder:FindFirstChild("Boss"),
+        gameFolder and gameFolder:FindFirstChild("SecretBoss"),
+        workspace:FindFirstChild("Virus")
+    }
 
-    if SharedState.IsVirusActive or phase == "Incursão" then
-        local virusFolder = (gameFolder and (gameFolder:FindFirstChild("Virus") or gameFolder:FindFirstChild("Boss") or gameFolder:FindFirstChild("SecretBoss"))) or workspace:FindFirstChild("Virus")
-        if virusFolder then
-            for _, desc in ipairs(virusFolder:GetDescendants()) do
-                if desc:IsA("Model") then addEntity(desc) end
-            end
-            if TargetingModule.IsAlive(virusFolder) then addEntity(virusFolder) end
-        end
-
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= char and not Players:GetPlayerFromCharacter(obj) then
-                local name = obj.Name:lower()
-                if name:find("mob") or name:find("enemy") or name:find("boss") or name:find("virus") or obj:FindFirstChildOfClass("Humanoid") then
-                    addEntity(obj)
+    for _, container in ipairs(searchContainers) do
+        if container then
+            for _, desc in ipairs(container:GetDescendants()) do
+                if desc:IsA("Model") then 
+                    addEntity(desc) 
                 end
             end
+            if container:IsA("Model") then
+                addEntity(container)
+            end
         end
     end
 
-    if #list == 0 and gameFolder and gameFolder:FindFirstChild("Stages") then
-        for _, stage in ipairs(gameFolder.Stages:GetDescendants()) do
-            if stage:IsA("Model") then addEntity(stage) end
+    -- Varredura de contingência geral no workspace.Game caso as pastas tenham nomes dinâmicos
+    if #list == 0 and gameFolder then
+        for _, child in ipairs(gameFolder:GetChildren()) do
+            if child:IsA("Model") and child ~= char and not Players:GetPlayerFromCharacter(child) then
+                addEntity(child)
+            end
         end
     end
 
@@ -955,7 +964,14 @@ function FlowModule.RunBleach()
     if enemyPart then
         CharacterModule.FlyToEnemy(enemyPart)
     else
-        CharacterModule.StopMovement()
+        -- Se não achou inimigo, mas está na hora do portal, força o avanço
+        if wave >= 8 and currentRoom == "Room1" then
+            FlowModule.PassPortal(BLEACH_PORTAL_1)
+        elseif wave >= 12 and currentRoom ~= "BossRoom" then
+            FlowModule.PassPortal(BLEACH_PORTAL_2)
+        else
+            CharacterModule.StopMovement()
+        end
     end
 end
 
@@ -1012,7 +1028,13 @@ function FlowModule.RunOnePiece()
     if enemyPart then
         CharacterModule.FlyToEnemy(enemyPart)
     else
-        CharacterModule.StopMovement()
+        if wave >= 7 and currentRoom == "Room1" then
+            FlowModule.PassPortal(OP_PORTAL_1_WAVE7)
+        elseif wave >= 12 and currentRoom == "Room2" then
+            FlowModule.PassPortal(OP_PORTAL_2_WAVE12)
+        else
+            CharacterModule.StopMovement()
+        end
     end
 end
 
@@ -1140,7 +1162,6 @@ task.spawn(function()
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
                     
-                    -- Auto-Claim Quests (Execução única silenciosa no tempo configurado)
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.ClaimDelaySeconds)
                         if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedQuests and ConfigModule.Settings.AutoClaimQuests then
@@ -1149,7 +1170,6 @@ task.spawn(function()
                         end
                     end)
 
-                    -- Auto-Sell e Auto-Favorite (Execução única no tempo configurado)
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.SellDelaySeconds)
                         if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell then
