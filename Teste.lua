@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (COM NOVO MODO BOSS RUSH)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (COM AUTO-DODGE VIA DEBRIS & BOSS RUSH)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -50,7 +50,7 @@ local pgui = player:WaitForChild("PlayerGui", 20)
 local function isInsideDungeon()
     local main = pgui and pgui:FindFirstChild("Main")
     if main and (main:FindFirstChild("DungeonFrame") or main:FindFirstChild("VirusFrame") or main:FindFirstChild("RaidFrame") or main:FindFirstChild("BossRushFrame")) then return true end
-    if workspace:FindFirstChild("Game") and (workspace.Game:FindFirstChild("Enemies") or workspace.Game:FindFirstChild("Teleports") or workspace.Game:FindFirstChild("Stages") or workspace.Game:FindFirstChild("Raids") or workspace.Game:FindFirstChild("BossRush")) then return true end
+    if workspace:FindFirstChild("Game") and (workspace.Game:FindFirstChild("Enemies") or workspace.Game:FindFirstChild("Teleports") or workspace.Game:FindFirstChild("Stages") or workspace.Game:FindFirstChild("Raids")) then return true end
     if workspace:FindFirstChild("Enemies") or workspace:FindFirstChild("Raids") or workspace:FindFirstChild("Boss") then return true end
     return false
 end
@@ -77,6 +77,7 @@ local SharedState = {
     HasExecutedSell = false,
     HasExecutedQuests = false,
     HasSentWebhook = false,
+    IsDodging = false,
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
@@ -87,7 +88,7 @@ local SharedState = {
 local ConfigModule = {}
 ConfigModule.Settings = {
     SelectedPhase = "Boss Rush",
-    PositionMode = "Em Cima da Cabeça",
+    PositionMode = "Nas Costas",
     CustomWeaponName = "VoidRods",
     AutoFarm = true,
     AutoAttack = true,
@@ -95,13 +96,15 @@ ConfigModule.Settings = {
     AutoStart = true,
     AutoPlayAgain = true,
     AutoEngage = true,
+    AutoDodge = true,
+    DodgeDistance = 35,
     HardcoreMode = false,
     StartWaitTime = 2.0,
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
     BackDistance = 6.0,
-    TweenSpeed = 48,
+    TweenSpeed = 50,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
     -- Configurações Auto-Sell & Auto-Favorite
@@ -170,7 +173,7 @@ end
 function WebhookModule.ProcessDungeonDrops()
     if SharedState.HasSentWebhook or not ConfigModule.Settings.WebhookEnabled then return end
     
-    local df = pgui and pgui:FindFirstChild("Main") and (pgui.Main:FindFirstChild("DungeonFrame") or pgui.Main:FindFirstChild("BossRushFrame"))
+    local df = pgui and pgui:FindFirstChild("Main") and (pgui.Main:FindFirstChild("DungeonFrame") or pgui.Main:FindFirstChild("BossRushFrame") or pgui.Main:FindFirstChild("RaidFrame"))
     local stats = df and df:FindFirstChild("DungeonStats")
     local rewardedHolder = stats and stats:FindFirstChild("RewardedHolder")
 
@@ -313,7 +316,7 @@ function CharacterModule.GetSafeCFrame(targetPosition, lookAtPosition)
 end
 
 function CharacterModule.FlyToEnemy(targetPart, overrideMode)
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning or SharedState.IsDodging then return end
     local _, root = CharacterModule.Get()
     if not root or not targetPart or not targetPart.Parent then return end
 
@@ -359,6 +362,20 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
         SharedState.CurrentTween:Cancel() 
     end
 
+    SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
+    SharedState.CurrentTween:Play()
+end
+
+function CharacterModule.FlyToPosition(targetPos, lookAtPos)
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or not SharedState.IsRunning then return end
+    local _, root = CharacterModule.Get()
+    if not root then return end
+
+    local targetCFrame = CFrame.lookAt(targetPos, lookAtPos or (targetPos + Vector3.new(0, 0, -1)))
+    local distance = (root.Position - targetPos).Magnitude
+    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.06, 2.0)
+
+    if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
     SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
     SharedState.CurrentTween:Play()
 end
@@ -442,20 +459,16 @@ function TargetingModule.GetLivingEnemies(phase)
     end
 
     local gameFolder = workspace:FindFirstChild("Game")
+    
     local searchContainers = {
         gameFolder and gameFolder:FindFirstChild("Enemies"),
         workspace:FindFirstChild("Enemies"),
-        gameFolder and gameFolder:FindFirstChild("BossRush"),
-        gameFolder and gameFolder:FindFirstChild("Boss"),
         gameFolder and gameFolder:FindFirstChild("Stages"),
-        gameFolder and gameFolder:FindFirstChild("Spawns"),
+        gameFolder and gameFolder:FindFirstChild("Boss"),
         gameFolder and gameFolder:FindFirstChild("Virus"),
         gameFolder and gameFolder:FindFirstChild("SecretBoss"),
-        gameFolder and gameFolder:FindFirstChild("Raids"),
-        gameFolder and gameFolder:FindFirstChild("Incursion"),
-        workspace:FindFirstChild("Virus"),
-        workspace:FindFirstChild("Raids"),
-        workspace:FindFirstChild("Boss")
+        gameFolder and gameFolder:FindFirstChild("BossRush"),
+        gameFolder and gameFolder:FindFirstChild("Destructibles")
     }
 
     for _, container in ipairs(searchContainers) do
@@ -467,20 +480,10 @@ function TargetingModule.GetLivingEnemies(phase)
         end
     end
 
-    if #list == 0 then
-        if gameFolder then
-            for _, child in ipairs(gameFolder:GetChildren()) do
-                if child:IsA("Model") and child ~= char and not Players:GetPlayerFromCharacter(child) then
-                    addEntity(child)
-                end
-            end
-        end
-        for _, obj in ipairs(workspace:GetChildren()) do
-            if obj:IsA("Model") and obj ~= char and not Players:GetPlayerFromCharacter(obj) then
-                local n = obj.Name:lower()
-                if n:find("mob") or n:find("enemy") or n:find("boss") or n:find("virus") or n:find("rush") or obj:FindFirstChildOfClass("Humanoid") then
-                    addEntity(obj)
-                end
+    if #list == 0 and gameFolder then
+        for _, desc in ipairs(gameFolder:GetDescendants()) do
+            if desc:IsA("Model") and desc ~= char and not Players:GetPlayerFromCharacter(desc) then
+                addEntity(desc)
             end
         end
     end
@@ -511,7 +514,39 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. MÓDULO DE COMBATE ]]
+-- [[ 6. MÓDULO DE ESQUIVA AUTOMÁTICA (AUTO-DODGE VIA DEBRIS) ]]
+local DodgeModule = {}
+
+function DodgeModule.CheckActiveWarnings()
+    if not ConfigModule.Settings.AutoDodge then return false, nil end
+    local _, root = CharacterModule.Get()
+    if not root then return false, nil end
+
+    local debris = workspace:FindFirstChild("Debris")
+    if not debris then return false, nil end
+
+    local highestDangerDist = 0
+    local dangerOrigin = nil
+
+    for _, obj in ipairs(debris:GetChildren()) do
+        if obj:IsA("BasePart") and obj.Parent then
+            local name = obj.Name:lower()
+            if name:find("warning") or name:find("floor") or name:find("blockwarning") or name:find("cylinderwarning") or name:find("hitbox") then
+                local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
+                radius = math.clamp(radius, 8, 80)
+                
+                local dist = (root.Position - obj.Position).Magnitude
+                if dist < (radius + 6) then
+                    return true, obj.Position, radius
+                end
+            end
+        end
+    end
+
+    return false, nil, 0
+end
+
+-- [[ 7. MÓDULO DE COMBATE ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local lastSkillUse = 0
@@ -561,7 +596,7 @@ function CombatModule.GetHotbar()
 end
 
 function CombatModule.ExecuteM1()
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning or SharedState.IsDodging then return end
     comboIndex = (comboIndex % 4) + 1
     local weapon = CombatModule.GetEffectiveWeapon()
     if attackRemote then pcall(function() attackRemote:FireServer("M1", weapon, comboIndex, 0, 0, 2) end) end
@@ -571,7 +606,7 @@ function CombatModule.ExecuteM1()
 end
 
 function CombatModule.ExecuteSkills()
-    if (tick() - lastSkillUse) < ConfigModule.Settings.SkillCooldown then return end
+    if SharedState.IsDodging or (tick() - lastSkillUse) < ConfigModule.Settings.SkillCooldown then return end
     local _, root = CharacterModule.Get()
     if not root then return end
 
@@ -600,7 +635,7 @@ function CombatModule.ExecuteSkills()
     end
 end
 
--- [[ 7. MÓDULO DE AUTO-SELL & AUTO-FAVORITE ]]
+-- [[ 8. MÓDULO DE AUTO-SELL & AUTO-FAVORITE ]]
 local AutoSellModule = {}
 local equipRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Equip", 10)
 local lastSellTick = 0
@@ -747,7 +782,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 8. MÓDULO DE MISSÕES ]]
+-- [[ 9. MÓDULO DE MISSÕES ]]
 local QuestModule = {}
 local questRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Quest", 10)
 
@@ -808,7 +843,7 @@ function QuestModule.ClaimAll()
     SharedState.IsClaiming = false
 end
 
--- [[ 9. MÓDULO DE FLUXO & PORTAIS COM PAUSA DE SERVIDOR ]]
+-- [[ 10. MÓDULO DE FLUXO & PORTAIS ]]
 local FlowModule = {}
 
 local BLEACH_PORTAL_1 = CFrame.new(4557.2, -305.5, 1925.0)
@@ -1025,17 +1060,42 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush (Permanece sempre atrás do Boss da vez)
+-- Rota Boss Rush com Auto-Dodge Horizontal
 function FlowModule.RunBossRush()
+    local _, root = CharacterModule.Get()
+    if not root then return end
+
     local _, enemyPart = TargetingModule.GetClosestEnemy("Boss Rush")
-    if enemyPart then
-        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
-    else
+    if not enemyPart then
+        SharedState.IsDodging = false
         CharacterModule.StopMovement()
+        return
+    end
+
+    -- 1. Verifica se há área vermelha no chão (Debris)
+    local inDanger, dangerPos, radius = DodgeModule.CheckActiveWarnings()
+    if inDanger and dangerPos then
+        SharedState.IsDodging = true
+        
+        -- Recua horizontalmente para longe do centro do golpe
+        local dodgeDir = (root.Position - dangerPos).Unit
+        if dodgeDir.Magnitude < 0.1 then
+            dodgeDir = -enemyPart.CFrame.LookVector
+        end
+        
+        local safeDist = math.max(radius + 8, ConfigModule.Settings.DodgeDistance)
+        local safePos = dangerPos + (dodgeDir * safeDist)
+        safePos = Vector3.new(safePos.X, root.Position.Y, safePos.Z)
+
+        CharacterModule.FlyToPosition(safePos, enemyPart.Position)
+    else
+        -- 2. Área segura: cola nas costas do Boss
+        SharedState.IsDodging = false
+        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
     end
 end
 
--- [[ 10. MÓDULO DE ESTADOS DA DUNGEON ]]
+-- [[ 11. MÓDULO DE ESTADOS DA DUNGEON ]]
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
@@ -1092,6 +1152,7 @@ local function onPlayerDiedHandler()
     CharacterModule.StopMovement()
     SharedState.EnteringPortal = false
     SharedState.IsTransitioning = false
+    SharedState.IsDodging = false
     SharedState.LastRoomState = "Room1"
 
     if not ConfigModule.Settings.HardcoreMode then return end
@@ -1124,6 +1185,7 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     SharedState.IsRespawning = true
     SharedState.IsTransitioning = false
     SharedState.EnteringPortal = false
+    SharedState.IsDodging = false
     SharedState.HasSentWebhook = false
     SharedState.LastRoomState = "Room1"
     CharacterModule.StopMovement()
@@ -1131,12 +1193,12 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     task.delay(0.8, function() SharedState.IsRespawning = false end)
 end)
 
--- [[ 11. MOTOR PRINCIPAL DE LOOPS ]]
+-- [[ 12. MOTOR PRINCIPAL DE LOOPS ]]
 local initialRoutinesScheduled = false
 
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal then
+        if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then CombatModule.ExecuteM1() end
         end
@@ -1146,7 +1208,7 @@ end)
 
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal then
+        if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then CombatModule.ExecuteSkills() end
         end
@@ -1192,6 +1254,7 @@ task.spawn(function()
                 if ended and playAgainBtn then
                     SharedState.IsDungeonEnded = true
                     SharedState.IsVirusActive = false
+                    SharedState.IsDodging = false
                     CharacterModule.StopMovement()
 
                     pcall(WebhookModule.ProcessDungeonDrops)
@@ -1235,7 +1298,7 @@ task.spawn(function()
     end
 end)
 
--- [[ 12. INTERFACE VISUAL ]]
+-- [[ 13. INTERFACE VISUAL ]]
 local UIModule = {}
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
@@ -1302,6 +1365,13 @@ function UIModule.Shutdown()
     if flightStabilizer then flightStabilizer:Disconnect() end
     if singletonTag and singletonTag.Parent then singletonTag:Destroy() end
     if toggleGui and toggleGui.Parent then toggleGui:Destroy() end
+    
+    pcall(function()
+        if Window and Window.Destroy then
+            Window:Destroy()
+        end
+    end)
+
     for _, gui in ipairs({CoreGui, player.PlayerGui}) do
         for _, child in ipairs(gui:GetChildren()) do
             if child.Name == "IBdihP_PersistentToggle" or child.Name:find("Fluent") then
@@ -1337,9 +1407,23 @@ PhaseSection:AddDropdown("PhaseSelector", {
 
 PhaseSection:AddDropdown("PositionModeSelector", {
     Title = "Modo de Posicionamento",
-    Values = { "Em Cima da Cabeça", "Nas Costas", "Padrão (Anterior)" },
+    Values = { "Nas Costas", "Em Cima da Cabeça", "Padrão (Anterior)" },
     Default = ConfigModule.Settings.PositionMode,
     Callback = function(Value) ConfigModule.Settings.PositionMode = Value ConfigModule.Save() end
+})
+
+local DodgeSection = Tabs.Farm:AddSection("Esquiva Automática (Auto-Dodge)")
+DodgeSection:AddToggle("AutoDodgeToggle", {
+    Title = "Ativar Auto-Dodge",
+    Description = "Recua automaticamente quando o Boss soltar áreas vermelhas no chão",
+    Default = ConfigModule.Settings.AutoDodge,
+    Callback = function(Value) ConfigModule.Settings.AutoDodge = Value ConfigModule.Save() end
+})
+DodgeSection:AddSlider("DodgeDistSlider", {
+    Title = "Distância Mínima de Fuga (Studs)",
+    Default = ConfigModule.Settings.DodgeDistance,
+    Min = 15, Max = 60, Rounding = 0,
+    Callback = function(Value) ConfigModule.Settings.DodgeDistance = Value ConfigModule.Save() end
 })
 
 local WeaponSection = Tabs.Farm:AddSection("Configuração de Arma")
