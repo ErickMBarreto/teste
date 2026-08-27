@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (COM AUTO-DODGE VIA DEBRIS & BOSS RUSH)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-DODGE ESTÁVEL & PRECISO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -97,14 +97,14 @@ ConfigModule.Settings = {
     AutoPlayAgain = true,
     AutoEngage = true,
     AutoDodge = true,
-    DodgeDistance = 35,
+    DodgeDistance = 28,
     HardcoreMode = false,
     StartWaitTime = 2.0,
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
     BackDistance = 6.0,
-    TweenSpeed = 50,
+    TweenSpeed = 48,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
     -- Configurações Auto-Sell & Auto-Favorite
@@ -371,9 +371,16 @@ function CharacterModule.FlyToPosition(targetPos, lookAtPos)
     local _, root = CharacterModule.Get()
     if not root then return end
 
-    local targetCFrame = CFrame.lookAt(targetPos, lookAtPos or (targetPos + Vector3.new(0, 0, -1)))
     local distance = (root.Position - targetPos).Magnitude
-    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.06, 2.0)
+    if distance <= 1.0 then return end
+
+    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 2.0 and SharedState.CurrentTween then
+        return
+    end
+
+    SharedState.CurrentTargetPos = targetPos
+    local targetCFrame = CFrame.lookAt(targetPos, lookAtPos or (targetPos + Vector3.new(0, 0, -1)))
+    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.08, 1.8)
 
     if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
     SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
@@ -514,29 +521,30 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. MÓDULO DE ESQUIVA AUTOMÁTICA (AUTO-DODGE VIA DEBRIS) ]]
+-- [[ 6. MÓDULO DE ESQUIVA AUTOMÁTICA ]]
 local DodgeModule = {}
 
-function DodgeModule.CheckActiveWarnings()
-    if not ConfigModule.Settings.AutoDodge then return false, nil end
+function DodgeModule.CheckActiveWarnings(enemyPart)
+    if not ConfigModule.Settings.AutoDodge then return false, nil, 0 end
     local _, root = CharacterModule.Get()
-    if not root then return false, nil end
+    if not root or not enemyPart then return false, nil, 0 end
 
     local debris = workspace:FindFirstChild("Debris")
-    if not debris then return false, nil end
-
-    local highestDangerDist = 0
-    local dangerOrigin = nil
+    if not debris then return false, nil, 0 end
 
     for _, obj in ipairs(debris:GetChildren()) do
         if obj:IsA("BasePart") and obj.Parent then
             local name = obj.Name:lower()
-            if name:find("warning") or name:find("floor") or name:find("blockwarning") or name:find("cylinderwarning") or name:find("hitbox") then
+            -- Checa estritamente os nomes de aviso do jogo
+            if name:find("blockwarning") or name:find("cylinderwarning") or (name:find("warning") and not name:find("player")) then
                 local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
-                radius = math.clamp(radius, 8, 80)
+                radius = math.clamp(radius, 6, 45)
                 
-                local dist = (root.Position - obj.Position).Magnitude
-                if dist < (radius + 6) then
+                local distToBoss = (obj.Position - enemyPart.Position).Magnitude
+                local distToPlayer = (root.Position - obj.Position).Magnitude
+
+                -- Só ativa se a área for gerada próxima ao Boss e o jogador estiver dentro do raio de perigo
+                if distToBoss < 80 and distToPlayer < (radius + 4.5) then
                     return true, obj.Position, radius
                 end
             end
@@ -1060,7 +1068,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush com Auto-Dodge Horizontal
+-- Rota Boss Rush
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1072,20 +1080,15 @@ function FlowModule.RunBossRush()
         return
     end
 
-    -- 1. Verifica se há área vermelha no chão (Debris)
-    local inDanger, dangerPos, radius = DodgeModule.CheckActiveWarnings()
+    -- 1. Verifica se há área vermelha no chão focada no Boss
+    local inDanger, dangerPos, radius = DodgeModule.CheckActiveWarnings(enemyPart)
     if inDanger and dangerPos then
         SharedState.IsDodging = true
         
-        -- Recua horizontalmente para longe do centro do golpe
-        local dodgeDir = (root.Position - dangerPos).Unit
-        if dodgeDir.Magnitude < 0.1 then
-            dodgeDir = -enemyPart.CFrame.LookVector
-        end
-        
-        local safeDist = math.max(radius + 8, ConfigModule.Settings.DodgeDistance)
-        local safePos = dangerPos + (dodgeDir * safeDist)
-        safePos = Vector3.new(safePos.X, root.Position.Y, safePos.Z)
+        -- Recua em linha reta para trás da direção que o Boss olha
+        local lookVec = enemyPart.CFrame.LookVector
+        local dodgeOffset = -lookVec * (radius + ConfigModule.Settings.DodgeDistance) + Vector3.new(0, 2.5, 0)
+        local safePos = enemyPart.Position + dodgeOffset
 
         CharacterModule.FlyToPosition(safePos, enemyPart.Position)
     else
@@ -1420,9 +1423,9 @@ DodgeSection:AddToggle("AutoDodgeToggle", {
     Callback = function(Value) ConfigModule.Settings.AutoDodge = Value ConfigModule.Save() end
 })
 DodgeSection:AddSlider("DodgeDistSlider", {
-    Title = "Distância Mínima de Fuga (Studs)",
+    Title = "Distância Adicional de Fuga (Studs)",
     Default = ConfigModule.Settings.DodgeDistance,
-    Min = 15, Max = 60, Rounding = 0,
+    Min = 15, Max = 50, Rounding = 0,
     Callback = function(Value) ConfigModule.Settings.DodgeDistance = Value ConfigModule.Save() end
 })
 
