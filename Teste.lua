@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FIX PLAY AGAIN INSTANTÂNEO & ENGAGE)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FIX AUTO-QUEST APENAS NO INÍCIO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -75,6 +75,7 @@ local SharedState = {
     IsClaiming = false,
     IsDungeonEnded = false,
     HasExecutedSell = false,
+    HasExecutedQuests = false,
     HasSentWebhook = false,
     LastRoomState = "Room1",
     CurrentTween = nil,
@@ -231,7 +232,7 @@ function WebhookModule.ProcessDungeonDrops()
     end
 end
 
--- [[ 4. MÓDULO DE PERSONAGEM & FÍSICA ESTÁVEL ]]
+-- [[ 4. MÓDULO DE PERSONAGEM & FÍSICA ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -521,7 +522,10 @@ function CombatModule.DetectWeapon()
     local char = player.Character
     if char and char:FindFirstChildOfClass("Tool") then return char:FindFirstChildOfClass("Tool").Name end
     local bp = player:FindFirstChild("Backpack")
-    if bp and bp:FindFirstChildOfClass("Tool") then return bp:FindFirstChildOfClass("Tool").Name end
+    if bp then
+        local tool = bp:FindFirstChildOfClass("Tool")
+        if tool then return tool.Name end
+    end
     return nil
 end
 
@@ -1007,7 +1011,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- [[ 10. MÓDULO DE ESTADOS DA DUNGEON (BUSCA ROBUSTA & RESPOSTA RÁPIDA) ]]
+-- [[ 10. MÓDULO DE ESTADOS DA DUNGEON ]]
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
@@ -1134,15 +1138,16 @@ task.spawn(function()
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
                     
-                    -- Rotina de Auto-Claim Quests
+                    -- Rotina de Auto-Claim Quests (Execução única no início da run)
                     task.spawn(function()
                         task.wait(13)
-                        if SharedState.IsRunning and ConfigModule.Settings.AutoClaimQuests and not SharedState.IsDungeonEnded then
+                        if SharedState.IsRunning and ConfigModule.Settings.AutoClaimQuests and not SharedState.IsDungeonEnded and not SharedState.HasExecutedQuests then
+                            SharedState.HasExecutedQuests = true
                             QuestModule.ClaimAll()
                         end
                     end)
 
-                    -- Rotina de Auto-Sell e Auto-Favorite (Execução única no início da dungeon)
+                    -- Rotina de Auto-Sell e Auto-Favorite (Execução única no início da run)
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.SellDelaySeconds)
                         if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell then
@@ -1167,10 +1172,6 @@ task.spawn(function()
 
                     -- Disparo do Webhook no fim da partida
                     pcall(WebhookModule.ProcessDungeonDrops)
-
-                    if ConfigModule.Settings.AutoClaimQuests then
-                        pcall(QuestModule.ClaimAll)
-                    end
 
                     if ConfigModule.Settings.AutoPlayAgain then
                         queueNextExecution()
