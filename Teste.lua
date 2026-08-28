@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FOCO 100% NAS COSTAS DO BOSS)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (ORBITAL ATIVO NAS COSTAS DO BOSS)
 -- ====================================================================
 
 -- [[ 1. TRAVA GLOBAL SINGLETON ]]
@@ -85,7 +85,7 @@ ConfigModule.Settings = {
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
     BackDistance = 4.5,
-    TweenSpeed = 58,
+    TweenSpeed = 60,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
     AutoSell = true,
@@ -320,6 +320,35 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
     SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
     SharedState.CurrentTween:Play()
+end
+
+-- Posicionamento e Órbita Contínua Exclusivo para Boss Rush
+function CharacterModule.FollowBehindLive(targetPart)
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
+    local _, root = CharacterModule.Get()
+    if not root or not targetPart or not targetPart.Parent then return end
+
+    local enemyPos = targetPart.Position
+    local lookVec = targetPart.CFrame.LookVector
+    local horizontalLook = Vector3.new(lookVec.X, 0, lookVec.Z)
+    if horizontalLook.Magnitude > 0.05 then
+        lookVec = horizontalLook.Unit
+    end
+
+    local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 0.8, 0)
+    local desiredPos = enemyPos + backOffset
+    local targetCFrame = CFrame.lookAt(desiredPos, enemyPos)
+
+    local distance = (root.Position - desiredPos).Magnitude
+
+    if distance > 1.2 then
+        local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.03, 0.25)
+        if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
+        SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Linear), {CFrame = targetCFrame})
+        SharedState.CurrentTween:Play()
+    else
+        root.CFrame = targetCFrame
+    end
 end
 
 function CharacterModule.FlyToPortal(targetCFrame)
@@ -953,11 +982,11 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush (FICA 100% CRAVADO NAS COSTAS)
+-- Rota Boss Rush (SEMPRE CRAVADO ATRÁS DO BOSS MESMO QUANDO ELE GIRA)
 function FlowModule.RunBossRush()
     local _, enemyPart = TargetingModule.GetClosestEnemy("Boss Rush")
-    if enemyPart then
-        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
+    if enemyPart and enemyPart.Parent then
+        CharacterModule.FollowBehindLive(enemyPart)
     else
         CharacterModule.StopMovement()
     end
