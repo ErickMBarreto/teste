@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (DESTRAVADO & TOTALMENTE OPERACIONAL)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (DELAY INICIAL DE 3S ESTÁVEL)
 -- ====================================================================
 
 local CoreGui = game:GetService("CoreGui")
@@ -10,7 +10,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local RunService = game:GetService("RunService")
 
--- [[ 1. LIMPEZA & SINGLETON SEGURO ]]
+-- [[ 1. LIMPEZA & BOOTSTRAP ]]
 local UNIQUE_ID = "HubRapazes_Singleton_Tag"
 local oldTag = CoreGui:FindFirstChild(UNIQUE_ID)
 if oldTag then pcall(function() oldTag:Destroy() end) end
@@ -48,7 +48,6 @@ if not game:IsLoaded() then game.Loaded:Wait() end
 local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local pgui = player:WaitForChild("PlayerGui", 20)
 
--- [[ 2. CARREGAMENTO DA UI NO TOPO ]]
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 
 local SharedState = {
@@ -68,10 +67,11 @@ local SharedState = {
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
-    LastPortalAttempt = 0
+    LastPortalAttempt = 0,
+    MatchStartTick = tick() -- Marca o tempo da partida
 }
 
--- [[ 3. CONFIGURAÇÕES ]]
+-- [[ 2. CONFIGURAÇÕES ]]
 local ConfigModule = {}
 ConfigModule.Settings = {
     SelectedPhase = "Boss Rush",
@@ -86,7 +86,7 @@ ConfigModule.Settings = {
     AutoDodge = true,
     DodgeDistance = 6,
     HardcoreMode = false,
-    StartWaitTime = 1.0,
+    StartWaitTime = 3.0, -- Espera de 3 segundos configurada
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
@@ -136,7 +136,7 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 4. DISCORD WEBHOOK ]]
+-- [[ 3. DISCORD WEBHOOK ]]
 local WebhookModule = {}
 
 function WebhookModule.Send(payloadTable)
@@ -217,7 +217,7 @@ function WebhookModule.ProcessDungeonDrops()
     end
 end
 
--- [[ 5. PERSONAGEM & FÍSICA ESTÁVEL ]]
+-- [[ 4. PERSONAGEM & FÍSICA ESTÁVEL ]]
 local CharacterModule = {}
 local diedConnection = nil
 local charConnection = nil
@@ -255,13 +255,16 @@ end
 
 flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
-        local _, root, hum = CharacterModule.Get()
-        if root and hum and hum.Health > 0 then
-            if not SharedState.CurrentTween then
-                root.AssemblyLinearVelocity = Vector3.new(0, 0.05, 0)
-                root.AssemblyAngularVelocity = Vector3.zero
-            else
-                root.AssemblyAngularVelocity = Vector3.zero
+        -- Só flutua se já passou o tempo de espera inicial
+        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
+            local _, root, hum = CharacterModule.Get()
+            if root and hum and hum.Health > 0 then
+                if not SharedState.CurrentTween then
+                    root.AssemblyLinearVelocity = Vector3.new(0, 0.05, 0)
+                    root.AssemblyAngularVelocity = Vector3.zero
+                else
+                    root.AssemblyAngularVelocity = Vector3.zero
+                end
             end
         end
     end
@@ -383,7 +386,7 @@ function CharacterModule.PressKey(keyCode)
     end)
 end
 
--- [[ 6. DETECÇÃO DE INIMIGOS ]]
+-- [[ 5. DETECÇÃO DE INIMIGOS ]]
 local TargetingModule = {}
 
 function TargetingModule.IsAlive(obj)
@@ -477,7 +480,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 7. ESQUIVA INTELIGENTE DE AOE ]]
+-- [[ 6. ESQUIVA INTELIGENTE DE AOE ]]
 local DodgeModule = {}
 
 function DodgeModule.GetActiveDangerAoE(enemyPart)
@@ -517,7 +520,7 @@ function DodgeModule.GetActiveDangerAoE(enemyPart)
     return nil, 0
 end
 
--- [[ 8. MÓDULO DE COMBATE ]]
+-- [[ 7. MÓDULO DE COMBATE ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local lastSkillUse = 0
@@ -606,7 +609,7 @@ function CombatModule.ExecuteSkills()
     end
 end
 
--- [[ 9. AUTO-SELL & AUTO-FAVORITE ]]
+-- [[ 8. AUTO-SELL & AUTO-FAVORITE ]]
 local AutoSellModule = {}
 local equipRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Equip", 10)
 local lastSellTick = 0
@@ -738,7 +741,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 10. MÓDULO DE MISSÕES ]]
+-- [[ 9. MÓDULO DE MISSÕES ]]
 local QuestModule = {}
 local questRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Quest", 10)
 
@@ -797,7 +800,7 @@ function QuestModule.ClaimAll()
     SharedState.IsClaiming = false
 end
 
--- [[ 11. FLUXO DE FASES & ROTAS ]]
+-- [[ 10. FLUXO DE FASES & ROTAS ]]
 local FlowModule = {}
 
 local BLEACH_PORTAL_1 = CFrame.new(4557.2, -305.5, 1925.0)
@@ -1054,13 +1057,12 @@ function FlowModule.RunBossRush()
     end
 end
 
--- [[ 12. ESTADOS DA DUNGEON & AUTO-START ]]
+-- [[ 11. ESTADOS DA DUNGEON & AUTO-START ]]
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
     if not pgui then return end
     
-    -- Varredura em toda a Main GUI para apertar botões de Play/Start
     local main = pgui:FindFirstChild("Main")
     if main then
         for _, btn in ipairs(main:GetDescendants()) do
@@ -1069,12 +1071,14 @@ function DungeonStateModule.CheckStart()
                 if bName == "start" or bName == "play" or bName == "startbutton" or bName == "playbutton" then
                     CharacterModule.TriggerButton(btn)
                     SharedState.IsVirusActive = false
+                    SharedState.MatchStartTick = tick()
                     return
                 end
                 local label = btn:FindFirstChildOfClass("TextLabel")
                 if label and (label.Text:lower():find("start") or label.Text:lower():find("play") or label.Text:lower():find("iniciar") or label.Text:lower():find("jogar")) then
                     CharacterModule.TriggerButton(btn)
                     SharedState.IsVirusActive = false
+                    SharedState.MatchStartTick = tick()
                     return
                 end
             end
@@ -1163,37 +1167,42 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     SharedState.ActiveDangerPart = nil
     SharedState.HasSentWebhook = false
     SharedState.LastRoomState = "Room1"
+    SharedState.MatchStartTick = tick()
     CharacterModule.StopMovement()
     bindCharacterEvents(newChar)
     task.delay(0.8, function() SharedState.IsRespawning = false end)
 end)
 
--- [[ 13. LOOPS PRINCIPAIS DE EXECUÇÃO ]]
+-- [[ 12. LOOPS PRINCIPAIS ]]
 local initialRoutinesScheduled = false
 
--- Loop 1: Ataque M1
+-- Loop 1: Ataque M1 (Aguarda 3s após o início)
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
-            local _, _, hum = CharacterModule.Get()
-            if hum and hum.Health > 0 then CombatModule.ExecuteM1() end
+        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
+            if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
+                local _, _, hum = CharacterModule.Get()
+                if hum and hum.Health > 0 then CombatModule.ExecuteM1() end
+            end
         end
         task.wait(ConfigModule.Settings.AttackSpeed)
     end
 end)
 
--- Loop 2: Skills (Z, X, C)
+-- Loop 2: Skills (Aguarda 3s após o início)
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
-            local _, _, hum = CharacterModule.Get()
-            if hum and hum.Health > 0 then CombatModule.ExecuteSkills() end
+        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
+            if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
+                local _, _, hum = CharacterModule.Get()
+                if hum and hum.Health > 0 then CombatModule.ExecuteSkills() end
+            end
         end
         task.wait(0.1)
     end
 end)
 
--- Loop 3: Farm, Movimentação e Estados
+-- Loop 3: Farm & Movimento
 task.spawn(function()
     while SharedState.IsRunning do
         if ConfigModule.Settings.AutoStart then DungeonStateModule.CheckStart() end
@@ -1254,14 +1263,17 @@ task.spawn(function()
                         SharedState.IsVirusActive = true
                         task.wait(1.0)
                     else
-                        if ConfigModule.Settings.SelectedPhase == "One Piece" then
-                            FlowModule.RunOnePiece()
-                        elseif ConfigModule.Settings.SelectedPhase == "Bleach (Fase 4)" then
-                            FlowModule.RunBleach()
-                        elseif ConfigModule.Settings.SelectedPhase == "Incursão" then
-                            FlowModule.RunIncursion()
-                        elseif ConfigModule.Settings.SelectedPhase == "Boss Rush" then
-                            FlowModule.RunBossRush()
+                        -- Espera os 3 segundos antes de iniciar os voos e rotas
+                        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
+                            if ConfigModule.Settings.SelectedPhase == "One Piece" then
+                                FlowModule.RunOnePiece()
+                            elseif ConfigModule.Settings.SelectedPhase == "Bleach (Fase 4)" then
+                                FlowModule.RunBleach()
+                            elseif ConfigModule.Settings.SelectedPhase == "Incursão" then
+                                FlowModule.RunIncursion()
+                            elseif ConfigModule.Settings.SelectedPhase == "Boss Rush" then
+                                FlowModule.RunBossRush()
+                            end
                         end
                     end
                 end
@@ -1275,7 +1287,7 @@ task.spawn(function()
     end
 end)
 
--- [[ 14. INTERFACE VISUAL FLUENT ]]
+-- [[ 13. INTERFACE VISUAL FLUENT ]]
 local UIModule = {}
 
 local Window = Fluent:CreateWindow({
