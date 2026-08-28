@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (CLIQUE FÍSICO REAL & AUTO-START)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MOUSE LIVRE & AUTO-START NATIVO)
 -- ====================================================================
 
 local CoreGui = game:GetService("CoreGui")
@@ -9,7 +9,6 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local RunService = game:GetService("RunService")
-local GuiService = game:GetService("GuiService")
 
 -- [[ 1. LIMPEZA & BOOTSTRAP ]]
 local UNIQUE_ID = "HubRapazes_Singleton_Tag"
@@ -69,6 +68,7 @@ local SharedState = {
     CurrentTween = nil,
     CurrentTargetPos = nil,
     LastPortalAttempt = 0,
+    LastStartAttempt = 0,
     MatchStartTick = tick()
 }
 
@@ -365,27 +365,15 @@ function CharacterModule.FlyToPortal(targetCFrame)
     SharedState.CurrentTween:Play()
 end
 
--- Acionador Universal de Botões de UI (Simulação Física + Sinais de Script)
+-- Acionador 100% Nativo de Botões (Não Move Cursor do Mouse)
 function CharacterModule.TriggerButton(btn)
     if not btn or not SharedState.IsRunning then return end
     pcall(function()
-        -- 1. Disparo direto por sinal do motor
         for _, evName in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
             if btn[evName] and firesignal then firesignal(btn[evName]) end
             if btn[evName] and getconnections then
                 for _, c in ipairs(getconnections(btn[evName])) do c:Fire() end
             end
-        end
-
-        -- 2. Disparo de clique físico via VirtualInputManager na posição absoluta do botão
-        if btn:IsA("GuiObject") and btn.Visible then
-            local pos = btn.AbsolutePosition
-            local size = btn.AbsoluteSize
-            local centerX = pos.X + (size.X / 2)
-            local centerY = pos.Y + (size.Y / 2) + 36 -- Offset comum de TopBar
-            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
-            task.wait(0.03)
-            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
         end
     end)
 end
@@ -1074,12 +1062,12 @@ end
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
-    if not pgui then return end
+    if not pgui or (tick() - SharedState.LastStartAttempt) < 0.8 then return end
+    SharedState.LastStartAttempt = tick()
     
     local main = pgui:FindFirstChild("Main")
     if not main then return end
 
-    -- 1. Procura frames dedicados de inicialização
     local targetFrames = {
         main:FindFirstChild("DungeonFrame"),
         main:FindFirstChild("BossRushFrame"),
@@ -1099,7 +1087,6 @@ function DungeonStateModule.CheckStart()
         end
     end
 
-    -- 2. Varredura recursiva de contingência em botões visíveis
     for _, btn in ipairs(main:GetDescendants()) do
         if btn:IsA("GuiButton") and btn.Visible then
             local bName = btn.Name:lower()
@@ -1210,7 +1197,7 @@ end)
 -- [[ 12. LOOPS PRINCIPAIS ]]
 local initialRoutinesScheduled = false
 
--- Loop 1: Ataque M1 (Aguarda 3s após o início)
+-- Loop 1: Ataque M1
 task.spawn(function()
     while SharedState.IsRunning do
         if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
@@ -1223,7 +1210,7 @@ task.spawn(function()
     end
 end)
 
--- Loop 2: Skills (Aguarda 3s após o início)
+-- Loop 2: Skills
 task.spawn(function()
     while SharedState.IsRunning do
         if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
