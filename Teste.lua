@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (BOSS RUSH: FLANK INSTANTÂNEO NAS COSTAS)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (M1 DESTRAVADO & FLUXO ISOLADO)
 -- ====================================================================
 
 -- [[ 1. TRAVA GLOBAL SINGLETON ]]
@@ -287,7 +287,7 @@ function CharacterModule.GetSafeCFrame(targetPosition, lookAtPosition)
 end
 
 function CharacterModule.FlyToEnemy(targetPart, overrideMode, forceInstant)
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning or SharedState.IsDodging then return end
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
     local _, root = CharacterModule.Get()
     if not root or not targetPart or not targetPart.Parent then return end
 
@@ -511,19 +511,16 @@ function DodgeModule.AnalyzeDanger(enemyPart)
         end
     end
 
-    -- Misto (Área + Linha) -> Flanco nas Costas
     if foundCircleAoE and foundLineAttack then
         SharedState.ActiveDangerPart = nil
         return "MultipleAttacks", nil, 0
     end
 
-    -- Apenas Linha -> Flanco nas Costas
     if foundLineAttack then
         SharedState.ActiveDangerPart = nil
         return "LineAttack", nil, 0
     end
 
-    -- Apenas Área Circular -> Fuga Horizontal
     if foundCircleAoE then
         SharedState.ActiveDangerPart = foundCircleAoE
         return "CircleAoE", foundCircleAoE, circleRadius
@@ -533,7 +530,7 @@ function DodgeModule.AnalyzeDanger(enemyPart)
     return "None", nil, 0
 end
 
--- [[ 7. MÓDULO DE COMBATE ]]
+-- [[ 7. MÓDULO DE COMBATE TOTALMENTE DESTRAVADO ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local skillRemote = ReplicatedStorage:WaitForChild("Remotes", 10):FindFirstChild("Skill") or ReplicatedStorage:WaitForChild("Remotes", 10):FindFirstChild("Spell")
@@ -541,6 +538,11 @@ local lastSkillUse = 0
 local comboIndex = 1
 
 function CombatModule.DetectWeapon()
+    local char = player.Character
+    if char and char:FindFirstChildOfClass("Tool") then 
+        return char:FindFirstChildOfClass("Tool").Name 
+    end
+
     local pguiRef = player:FindFirstChild("PlayerGui")
     if pguiRef then
         for _, desc in ipairs(pguiRef:GetDescendants()) do
@@ -556,8 +558,6 @@ function CombatModule.DetectWeapon()
         end
     end
 
-    local char = player.Character
-    if char and char:FindFirstChildOfClass("Tool") then return char:FindFirstChildOfClass("Tool").Name end
     local bp = player:FindFirstChild("Backpack")
     if bp then
         local tool = bp:FindFirstChildOfClass("Tool")
@@ -584,17 +584,25 @@ function CombatModule.GetHotbar()
 end
 
 function CombatModule.ExecuteM1()
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning or SharedState.IsDodging then return end
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
     comboIndex = (comboIndex % 4) + 1
     local weapon = CombatModule.GetEffectiveWeapon()
-    if attackRemote then pcall(function() attackRemote:FireServer("M1", weapon, comboIndex, 0, 0, 2) end) end
+    
+    -- Disparo no Remote do Servidor
+    if attackRemote then 
+        pcall(function() attackRemote:FireServer("M1", weapon, comboIndex, 0, 0, 2) end) 
+    end
 
+    -- Ativação direta da Tool na mão
     local char = player.Character
-    if char and char:FindFirstChildOfClass("Tool") then pcall(function() char:FindFirstChildOfClass("Tool"):Activate() end) end
+    if char then
+        local tool = char:FindFirstChildOfClass("Tool")
+        if tool then pcall(function() tool:Activate() end) end
+    end
 end
 
 function CombatModule.ExecuteSkills()
-    if SharedState.IsDodging or (tick() - lastSkillUse) < ConfigModule.Settings.SkillCooldown then return end
+    if (tick() - lastSkillUse) < ConfigModule.Settings.SkillCooldown then return end
     local _, root = CharacterModule.Get()
     if not root then return end
 
@@ -1028,7 +1036,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush (FLANCO INSTANTÂNEO EM GOLPES RETOS / FUGA EM AOE)
+-- Rota Boss Rush
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1193,15 +1201,17 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     task.delay(0.8, function() SharedState.IsRespawning = false end)
 end)
 
--- [[ 12. LOOPS PRINCIPAIS ]]
+-- [[ 12. LOOPS PRINCIPAIS INDEPENDENTES ]]
 local initialRoutinesScheduled = false
 
--- Loop 1: Ataque M1
+-- Loop 1: Ataque M1 (100% Contínuo)
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
+        if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal then
             local _, _, hum = CharacterModule.Get()
-            if hum and hum.Health > 0 then CombatModule.ExecuteM1() end
+            if hum and hum.Health > 0 then 
+                CombatModule.ExecuteM1() 
+            end
         end
         task.wait(ConfigModule.Settings.AttackSpeed)
     end
@@ -1210,9 +1220,11 @@ end)
 -- Loop 2: Skills
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
+        if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal then
             local _, _, hum = CharacterModule.Get()
-            if hum and hum.Health > 0 then CombatModule.ExecuteSkills() end
+            if hum and hum.Health > 0 then 
+                CombatModule.ExecuteSkills() 
+            end
         end
         task.wait(0.1)
     end
