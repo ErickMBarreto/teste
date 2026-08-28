@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (INCURSÃO MODULAR & ISOLADA)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FIX: LOADING INFINITO & ASYNC WEBHOOK)
 -- ====================================================================
 
 -- [[ 1. TRAVA GLOBAL SINGLETON ]]
@@ -25,7 +25,7 @@ local function queueNextExecution()
             queueFunc(string.format([[
                 if getgenv then getgenv().HubDosRapazes_Loaded = nil end
                 repeat task.wait(0.5) until game:IsLoaded() and game.Players.LocalPlayer
-                task.wait(1.5)
+                task.wait(2.5)
                 loadstring(game:HttpGet("%s"))()
             ]], scriptURL))
         end)
@@ -130,21 +130,25 @@ function ConfigModule.Load()
 end
 ConfigModule.Load()
 
--- [[ 3. DISCORD WEBHOOK ]]
+-- [[ 3. DISCORD WEBHOOK TOTALMENTE ASSÍNCRONO ]]
 local WebhookModule = {}
 
 function WebhookModule.Send(payloadTable)
     if not ConfigModule.Settings.WebhookEnabled or ConfigModule.Settings.WebhookURL == "" then return end
-    local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
-    if not httpRequest then return end
+    
+    -- Disparo isolado em thread independente para jamais travar o client
+    task.spawn(function()
+        local httpRequest = (syn and syn.request) or (http and http.request) or http_request or (fluxus and fluxus.request) or request
+        if not httpRequest then return end
 
-    pcall(function()
-        httpRequest({
-            Url = ConfigModule.Settings.WebhookURL,
-            Method = "POST",
-            Headers = { ["Content-Type"] = "application/json" },
-            Body = HttpService:JSONEncode(payloadTable)
-        })
+        pcall(function()
+            httpRequest({
+                Url = ConfigModule.Settings.WebhookURL,
+                Method = "POST",
+                Headers = { ["Content-Type"] = "application/json" },
+                Body = HttpService:JSONEncode(payloadTable)
+            })
+        end)
     end)
 end
 
@@ -322,7 +326,6 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     SharedState.CurrentTween:Play()
 end
 
--- Posicionamento Contínuo para o Boss Rush
 function CharacterModule.FollowBehindLive(targetPart)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
     local _, root = CharacterModule.Get()
@@ -983,7 +986,7 @@ function FlowModule.RunBossRush()
     end
 end
 
--- Rota Incursão (12 Waves sem Portais - Persegue e Elimina Mobs / Boss)
+-- Rota Incursão
 function FlowModule.RunIncursion()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1069,7 +1072,6 @@ local function onPlayerDiedHandler()
     SharedState.IsTransitioning = false
     SharedState.LastRoomState = "Room1"
 
-    -- SE ESTIVER NO BOSS RUSH: CLICA EM PLAY AGAIN IMEDIATAMENTE APÓS A MORTE
     if ConfigModule.Settings.SelectedPhase == "Boss Rush" and ConfigModule.Settings.AutoPlayAgain then
         task.spawn(function()
             task.wait(1.5)
@@ -1089,12 +1091,10 @@ local function onPlayerDiedHandler()
         return
     end
 
-    -- SE ESTIVER NA INCURSÃO: APENAS ESPERA O RESPAWN DO JOGO NORMALMENTE
     if ConfigModule.Settings.SelectedPhase == "Incursão" then
         return
     end
 
-    -- MODO HARDCORE DAS OUTRAS FASES
     if not ConfigModule.Settings.HardcoreMode then return end
     task.spawn(function()
         task.wait(23)
@@ -1135,7 +1135,7 @@ end)
 -- [[ 11. LOOPS PRINCIPAIS INDEPENDENTES ]]
 local initialRoutinesScheduled = false
 
--- Loop 1: Ataque M1 (100% Contínuo)
+-- Loop 1: Ataque M1
 task.spawn(function()
     while SharedState.IsRunning do
         if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal then
@@ -1148,7 +1148,7 @@ task.spawn(function()
     end
 end)
 
--- Loop 2: Skills (100% Contínuo)
+-- Loop 2: Skills
 task.spawn(function()
     while SharedState.IsRunning do
         if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal then
