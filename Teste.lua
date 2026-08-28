@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (BOSS RUSH ESTABILIZADO NO INÍCIO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FLUXO TOTALMENTE DESTRAVADO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -78,13 +78,11 @@ local SharedState = {
     HasExecutedQuests = false,
     HasSentWebhook = false,
     IsDodging = false,
-    HasTarget = false,
     ActiveDangerPart = nil,
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
-    LastPortalAttempt = 0,
-    DungeonStartTime = tick()
+    LastPortalAttempt = 0
 }
 
 -- [[ 2. CONFIGURAÇÕES ]]
@@ -102,7 +100,7 @@ ConfigModule.Settings = {
     AutoDodge = true,
     DodgeDistance = 6,
     HardcoreMode = false,
-    StartWaitTime = 2.0,
+    StartWaitTime = 1.0,
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
@@ -110,7 +108,6 @@ ConfigModule.Settings = {
     TweenSpeed = 55,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
-    -- Configurações Auto-Sell & Auto-Favorite
     AutoSell = true,
     SellDelaySeconds = 10,
     AutoFavoriteSecrets = true,
@@ -120,7 +117,6 @@ ConfigModule.Settings = {
     SellEpic = true,
     SellLegendary = true,
     SellMythic = false,
-    -- Configurações Discord Webhook Padrão
     WebhookEnabled = true,
     WebhookURL = "https://discord.com/api/webhooks/1542138848195248258/Xqpgk33GsjM5UrMxT0IqIvkKvKulvSJQVc6CSuPmrf6lmrjNXwjxCwGCOK0aJun-Y83o",
     NotifySecrets = true,
@@ -277,8 +273,7 @@ end
 flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
         local _, root, hum = CharacterModule.Get()
-        -- Só aplica sustentação se estiver ativamente em combate
-        if root and hum and hum.Health > 0 and SharedState.HasTarget then
+        if root and hum and hum.Health > 0 then
             if not SharedState.CurrentTween then
                 root.AssemblyLinearVelocity = Vector3.new(0, 0.05, 0)
                 root.AssemblyAngularVelocity = Vector3.zero
@@ -609,7 +604,7 @@ function CombatModule.GetHotbar()
 end
 
 function CombatModule.ExecuteM1()
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning or SharedState.IsDodging or not SharedState.HasTarget then return end
+    if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning or SharedState.IsDodging then return end
     comboIndex = (comboIndex % 4) + 1
     local weapon = CombatModule.GetEffectiveWeapon()
     if attackRemote then pcall(function() attackRemote:FireServer("M1", weapon, comboIndex, 0, 0, 2) end) end
@@ -619,7 +614,7 @@ function CombatModule.ExecuteM1()
 end
 
 function CombatModule.ExecuteSkills()
-    if SharedState.IsDodging or not SharedState.HasTarget or (tick() - lastSkillUse) < ConfigModule.Settings.SkillCooldown then return end
+    if SharedState.IsDodging or (tick() - lastSkillUse) < ConfigModule.Settings.SkillCooldown then return end
     local _, root = CharacterModule.Get()
     if not root then return end
 
@@ -963,10 +958,8 @@ function FlowModule.RunBleach()
     if SharedState.IsVirusActive then
         local _, enemyPart = TargetingModule.GetClosestEnemy("Bleach (Fase 4)")
         if enemyPart then
-            SharedState.HasTarget = true
             CharacterModule.FlyToEnemy(enemyPart)
         else
-            SharedState.HasTarget = false
             CharacterModule.StopMovement()
         end
         return
@@ -1003,10 +996,8 @@ function FlowModule.RunBleach()
 
     local _, enemyPart = TargetingModule.GetClosestEnemy("Bleach (Fase 4)")
     if enemyPart then
-        SharedState.HasTarget = true
         CharacterModule.FlyToEnemy(enemyPart)
     else
-        SharedState.HasTarget = false
         CharacterModule.StopMovement()
     end
 end
@@ -1019,10 +1010,8 @@ function FlowModule.RunOnePiece()
     if SharedState.IsVirusActive then
         local _, enemyPart = TargetingModule.GetClosestEnemy("One Piece")
         if enemyPart then
-            SharedState.HasTarget = true
             CharacterModule.FlyToEnemy(enemyPart)
         else
-            SharedState.HasTarget = false
             CharacterModule.StopMovement()
         end
         return
@@ -1063,10 +1052,8 @@ function FlowModule.RunOnePiece()
 
     local _, enemyPart = TargetingModule.GetClosestEnemy("One Piece")
     if enemyPart then
-        SharedState.HasTarget = true
         CharacterModule.FlyToEnemy(enemyPart)
     else
-        SharedState.HasTarget = false
         CharacterModule.StopMovement()
     end
 end
@@ -1075,10 +1062,8 @@ end
 function FlowModule.RunIncursion()
     local _, enemyPart = TargetingModule.GetClosestEnemy("Incursão")
     if enemyPart then
-        SharedState.HasTarget = true
         CharacterModule.FlyToEnemy(enemyPart)
     else
-        SharedState.HasTarget = false
         CharacterModule.StopMovement()
     end
 end
@@ -1090,14 +1075,12 @@ function FlowModule.RunBossRush()
 
     local _, enemyPart = TargetingModule.GetClosestEnemy("Boss Rush")
     if not enemyPart then
-        SharedState.HasTarget = false
         SharedState.IsDodging = false
         SharedState.ActiveDangerPart = nil
         CharacterModule.StopMovement()
         return
     end
 
-    SharedState.HasTarget = true
     local dangerPart, radius = DodgeModule.GetActiveDangerAoE(enemyPart)
     
     if dangerPart and dangerPart.Parent then
@@ -1187,7 +1170,6 @@ local function onPlayerDiedHandler()
     SharedState.EnteringPortal = false
     SharedState.IsTransitioning = false
     SharedState.IsDodging = false
-    SharedState.HasTarget = false
     SharedState.ActiveDangerPart = nil
     SharedState.LastRoomState = "Room1"
 
@@ -1222,11 +1204,9 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     SharedState.IsTransitioning = false
     SharedState.EnteringPortal = false
     SharedState.IsDodging = false
-    SharedState.HasTarget = false
     SharedState.ActiveDangerPart = nil
     SharedState.HasSentWebhook = false
     SharedState.LastRoomState = "Room1"
-    SharedState.DungeonStartTime = tick()
     CharacterModule.StopMovement()
     bindCharacterEvents(newChar)
     task.delay(0.8, function() SharedState.IsRespawning = false end)
@@ -1235,9 +1215,10 @@ end)
 -- [[ 12. MOTOR PRINCIPAL DE LOOPS ]]
 local initialRoutinesScheduled = false
 
+-- Loop de Ataque Contínuo M1
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging and SharedState.HasTarget then
+        if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then CombatModule.ExecuteM1() end
         end
@@ -1245,9 +1226,10 @@ task.spawn(function()
     end
 end)
 
+-- Loop de Habilidades
 task.spawn(function()
     while SharedState.IsRunning do
-        if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging and SharedState.HasTarget then
+        if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then CombatModule.ExecuteSkills() end
         end
@@ -1255,15 +1237,17 @@ task.spawn(function()
     end
 end)
 
+-- Loop Principal de Farm e Movimento
 task.spawn(function()
     while SharedState.IsRunning do
+        if ConfigModule.Settings.AutoStart then DungeonStateModule.CheckStart() end
+
         if ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning then
             local _, _, hum = CharacterModule.Get()
             if hum and hum.Health > 0 then
                 if not initialRoutinesScheduled then
                     initialRoutinesScheduled = true
                     
-                    -- Rotina de Auto-Claim Quests
                     task.spawn(function()
                         task.wait(13)
                         if SharedState.IsRunning and ConfigModule.Settings.AutoClaimQuests and not SharedState.IsDungeonEnded and not SharedState.HasExecutedQuests then
@@ -1272,7 +1256,6 @@ task.spawn(function()
                         end
                     end)
 
-                    -- Rotina de Auto-Sell e Auto-Favorite
                     task.spawn(function()
                         task.wait(ConfigModule.Settings.SellDelaySeconds)
                         if SharedState.IsRunning and not SharedState.IsDungeonEnded and not SharedState.HasExecutedSell then
@@ -1287,14 +1270,11 @@ task.spawn(function()
                     end)
                 end
 
-                if ConfigModule.Settings.AutoStart then DungeonStateModule.CheckStart() end
-
                 local ended, playAgainBtn = DungeonStateModule.CheckEnd()
                 if ended and playAgainBtn then
                     SharedState.IsDungeonEnded = true
                     SharedState.IsVirusActive = false
                     SharedState.IsDodging = false
-                    SharedState.HasTarget = false
                     SharedState.ActiveDangerPart = nil
                     CharacterModule.StopMovement()
 
@@ -1318,28 +1298,21 @@ task.spawn(function()
                         SharedState.IsVirusActive = true
                         task.wait(1.0)
                     else
-                        -- Espera o delay inicial seguro para os inimigos nascerem
-                        if (tick() - SharedState.DungeonStartTime) >= ConfigModule.Settings.StartWaitTime then
-                            if ConfigModule.Settings.SelectedPhase == "One Piece" then
-                                FlowModule.RunOnePiece()
-                            elseif ConfigModule.Settings.SelectedPhase == "Bleach (Fase 4)" then
-                                FlowModule.RunBleach()
-                            elseif ConfigModule.Settings.SelectedPhase == "Incursão" then
-                                FlowModule.RunIncursion()
-                            elseif ConfigModule.Settings.SelectedPhase == "Boss Rush" then
-                                FlowModule.RunBossRush()
-                            end
-                        else
-                            SharedState.HasTarget = false
+                        if ConfigModule.Settings.SelectedPhase == "One Piece" then
+                            FlowModule.RunOnePiece()
+                        elseif ConfigModule.Settings.SelectedPhase == "Bleach (Fase 4)" then
+                            FlowModule.RunBleach()
+                        elseif ConfigModule.Settings.SelectedPhase == "Incursão" then
+                            FlowModule.RunIncursion()
+                        elseif ConfigModule.Settings.SelectedPhase == "Boss Rush" then
+                            FlowModule.RunBossRush()
                         end
                     end
                 end
             else
-                SharedState.HasTarget = false
                 CharacterModule.StopMovement()
             end
         else
-            SharedState.HasTarget = false
             CharacterModule.StopMovement()
         end
         task.wait(0.04)
