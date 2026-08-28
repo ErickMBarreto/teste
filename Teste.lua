@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (BOSS RUSH: ESQUIVA AOE + FLANK DE LINHA RETA)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FIX COSTAS REAL & ESQUIVA AOE)
 -- ====================================================================
 
 local CoreGui = game:GetService("CoreGui")
@@ -9,24 +9,15 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
--- [[ 1. LIMPEZA & BOOTSTRAP ]]
+-- [[ 1. SINGLETON SEGURO ]]
 local UNIQUE_ID = "HubRapazes_Singleton_Tag"
-local oldTag = CoreGui:FindFirstChild(UNIQUE_ID)
-if oldTag then pcall(function() oldTag:Destroy() end) end
+if CoreGui:FindFirstChild(UNIQUE_ID) then 
+    return 
+end
 
 local singletonTag = Instance.new("Folder")
 singletonTag.Name = UNIQUE_ID
 pcall(function() singletonTag.Parent = CoreGui end)
-
-for _, gui in ipairs({CoreGui, Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("PlayerGui")}) do
-    if gui then
-        for _, child in ipairs(gui:GetChildren()) do
-            if child.Name == "IBdihP_PersistentToggle" or child.Name:find("Fluent") then
-                pcall(function() child:Destroy() end)
-            end
-        end
-    end
-end
 
 local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/teste/refs/heads/main/Teste.lua"
 local function queueNextExecution()
@@ -82,7 +73,7 @@ ConfigModule.Settings = {
     AutoPlayAgain = true,
     AutoEngage = true,
     AutoDodge = true,
-    DodgeDistance = 6,
+    DodgeDistance = 8,
     HardcoreMode = false,
     StartWaitTime = 2.0,
     SkillCooldown = 0.8,
@@ -296,13 +287,10 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     local targetCFrame
 
     if mode == "Nas Costas" then
+        -- Utiliza o LookVector do modelo principal para calcular as costas reais
         local lookVec = targetPart.CFrame.LookVector
-        if lookVec.Magnitude > 0.1 then
-            local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 0.8, 0)
-            targetCFrame = CFrame.lookAt(enemyPos + backOffset, enemyPos)
-        else
-            targetCFrame = CFrame.lookAt(enemyPos + Vector3.new(0, 0.8, 4.5), enemyPos)
-        end
+        local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 0.8, 0)
+        targetCFrame = CFrame.lookAt(enemyPos + backOffset, enemyPos)
     elseif mode == "Em Cima da Cabeça" then
         targetCFrame = CFrame.lookAt(enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0.1), enemyPos)
     else
@@ -473,7 +461,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. ESQUIVA DUPLA: AOE CIRCULAR + FLANK DE GOLPE RETO ]]
+-- [[ 6. ANALISADOR DE GOLPES & ESQUIVA ]]
 local DodgeModule = {}
 
 function DodgeModule.AnalyzeDanger(enemyPart)
@@ -481,7 +469,6 @@ function DodgeModule.AnalyzeDanger(enemyPart)
     local _, root = CharacterModule.Get()
     if not root or not enemyPart then return "None", nil, 0 end
 
-    -- Se já estamos nos esquivando de uma área ativa e ela ainda existe
     if SharedState.ActiveDangerPart and SharedState.ActiveDangerPart.Parent then
         local obj = SharedState.ActiveDangerPart
         local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
@@ -497,10 +484,7 @@ function DodgeModule.AnalyzeDanger(enemyPart)
         if obj:IsA("BasePart") and obj.Parent then
             local name = obj.Name:lower()
 
-            -- 1. GOLPE EM LINHA RETA / RETANGULAR FRONTAL
             local isLine = name:find("blockwarning") or name:find("linewarning") or name:find("beam")
-            
-            -- 2. GOLPE CIRCULAR EM ÁREA 360°
             local isCircle = name:find("cylinderwarning") or name:find("floor") or name:find("circle") or name:find("aoe")
 
             if isCircle and not isLine and not name:find("player") then
@@ -1024,7 +1008,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush (AoE: Fuga Horizontal | Linha Reta: Cola nas Costas Imediatamente)
+-- Rota Boss Rush (Esquiva AoE no chão + Costas garantidas)
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1040,7 +1024,7 @@ function FlowModule.RunBossRush()
     local dangerType, dangerPart, radius = DodgeModule.AnalyzeDanger(enemyPart)
     
     if dangerType == "CircleAoE" and dangerPart and dangerPart.Parent then
-        -- 1. GOLPE CIRCULAR 360°: Esquiva horizontal para fora do raio
+        -- 1. AOE CIRCULAR NO CHÃO: Recua no plano horizontal para fora da área
         SharedState.IsDodging = true
         
         local dangerPos = dangerPart.Position
@@ -1062,13 +1046,8 @@ function FlowModule.RunBossRush()
         local lookTarget = Vector3.new(enemyPart.Position.X, bossY, enemyPart.Position.Z)
 
         CharacterModule.FlyToPosition(safePos, lookTarget)
-    elseif dangerType == "LineAttack" then
-        -- 2. GOLPE EM LINHA RETA: Força posicionamento imediato nas costas do Boss (não para de bater)
-        SharedState.IsDodging = false
-        SharedState.ActiveDangerPart = nil
-        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
     else
-        -- 3. PADRÃO: Mantém posição nas costas do Boss
+        -- 2. GOLPE RETO OU POSICIONAMENTO PADRÃO: Cola nas costas do Boss e ataca
         SharedState.IsDodging = false
         SharedState.ActiveDangerPart = nil
         CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
