@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO-DODGE: REGRAS ESTRITAS)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (BOSS RUSH: FLANK INSTANTÂNEO NAS COSTAS)
 -- ====================================================================
 
 -- [[ 1. TRAVA GLOBAL SINGLETON ]]
@@ -89,7 +89,7 @@ ConfigModule.Settings = {
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
     BackDistance = 4.5,
-    TweenSpeed = 55,
+    TweenSpeed = 58,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
     AutoSell = true,
@@ -286,7 +286,7 @@ function CharacterModule.GetSafeCFrame(targetPosition, lookAtPosition)
     return CFrame.new(safePos, lookAtPosition)
 end
 
-function CharacterModule.FlyToEnemy(targetPart, overrideMode)
+function CharacterModule.FlyToEnemy(targetPart, overrideMode, forceInstant)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning or SharedState.IsDodging then return end
     local _, root = CharacterModule.Get()
     if not root or not targetPart or not targetPart.Parent then return end
@@ -297,6 +297,10 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
 
     if mode == "Nas Costas" then
         local lookVec = targetPart.CFrame.LookVector
+        local horizontalLook = Vector3.new(lookVec.X, 0, lookVec.Z)
+        if horizontalLook.Magnitude > 0.05 then
+            lookVec = horizontalLook.Unit
+        end
         local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 0.8, 0)
         targetCFrame = CFrame.lookAt(enemyPos + backOffset, enemyPos)
     elseif mode == "Em Cima da Cabeça" then
@@ -307,14 +311,15 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
 
     local targetPos = targetCFrame.Position
     local distance = (root.Position - targetPos).Magnitude
-    if distance <= 0.8 then return end
 
-    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.2 and SharedState.CurrentTween then
+    if not forceInstant and distance <= 0.8 then return end
+
+    if not forceInstant and SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.0 and SharedState.CurrentTween then
         return
     end
 
     SharedState.CurrentTargetPos = targetPos
-    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.05, 2.5)
+    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.04, 2.0)
 
     if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
     SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
@@ -329,13 +334,13 @@ function CharacterModule.FlyToPosition(targetPos, lookAtPos)
     local distance = (root.Position - targetPos).Magnitude
     if distance <= 0.6 then return end
 
-    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.0 and SharedState.CurrentTween then
+    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 0.8 and SharedState.CurrentTween then
         return
     end
 
     SharedState.CurrentTargetPos = targetPos
     local targetCFrame = CFrame.lookAt(targetPos, lookAtPos or (targetPos + Vector3.new(0, 0, -1)))
-    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.05, 1.2)
+    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.04, 1.2)
 
     if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
     SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
@@ -469,7 +474,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. ANALISADOR DE GOLPES (REGRAS: AOE vs LINHA vs MISTO) ]]
+-- [[ 6. ANALISADOR DE GOLPES ]]
 local DodgeModule = {}
 
 function DodgeModule.AnalyzeDanger(enemyPart)
@@ -506,19 +511,19 @@ function DodgeModule.AnalyzeDanger(enemyPart)
         end
     end
 
-    -- REGRA 1: Golpes Múltiplos (Tanto Área quanto Linha ativos ao mesmo tempo) -> Costas do Boss
+    -- Misto (Área + Linha) -> Flanco nas Costas
     if foundCircleAoE and foundLineAttack then
         SharedState.ActiveDangerPart = nil
         return "MultipleAttacks", nil, 0
     end
 
-    -- REGRA 2: Apenas Golpe em Linha Reta -> Costas do Boss
+    -- Apenas Linha -> Flanco nas Costas
     if foundLineAttack then
         SharedState.ActiveDangerPart = nil
         return "LineAttack", nil, 0
     end
 
-    -- REGRA 3: Apenas Golpe em Área Circular -> Recua para fora da área
+    -- Apenas Área Circular -> Fuga Horizontal
     if foundCircleAoE then
         SharedState.ActiveDangerPart = foundCircleAoE
         return "CircleAoE", foundCircleAoE, circleRadius
@@ -1023,7 +1028,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush (LÓGICA ESTRITA DE ESQUIVA)
+-- Rota Boss Rush (FLANCO INSTANTÂNEO EM GOLPES RETOS / FUGA EM AOE)
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1039,7 +1044,7 @@ function FlowModule.RunBossRush()
     local dangerType, dangerPart, radius = DodgeModule.AnalyzeDanger(enemyPart)
     
     if dangerType == "CircleAoE" and dangerPart and dangerPart.Parent then
-        -- 1. APENAS GOLPE EM ÁREA CIRCULAR: Sai da área no plano horizontal
+        -- 1. APENAS GOLPE CIRCULAR 360°: Recua horizontalmente
         SharedState.IsDodging = true
         
         local dangerPos = dangerPart.Position
@@ -1061,11 +1066,16 @@ function FlowModule.RunBossRush()
         local lookTarget = Vector3.new(enemyPart.Position.X, bossY, enemyPart.Position.Z)
 
         CharacterModule.FlyToPosition(safePos, lookTarget)
-    else
-        -- 2. GOLPE EM LINHA / GOLPES MÚLTIPLOS / SEM PERIGO: Fica cravado nas costas do Boss
+    elseif dangerType == "LineAttack" or dangerType == "MultipleAttacks" then
+        -- 2. GOLPE EM LINHA RETA OU MISTO: Força corte instantâneo direto para as costas do Boss
         SharedState.IsDodging = false
         SharedState.ActiveDangerPart = nil
-        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
+        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas", true)
+    else
+        -- 3. PADRÃO: Mantém posição nas costas do Boss
+        SharedState.IsDodging = false
+        SharedState.ActiveDangerPart = nil
+        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas", false)
     end
 end
 
