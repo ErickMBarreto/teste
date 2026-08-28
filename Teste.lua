@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MOUSE LIVRE & AUTO-START NATIVO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (MOUSE 100% LIVRE & AUTO-START LEVE)
 -- ====================================================================
 
 local CoreGui = game:GetService("CoreGui")
@@ -7,7 +7,6 @@ local Players = game:GetService("Players")
 local HttpService = game:GetService("HttpService")
 local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local RunService = game:GetService("RunService")
 
 -- [[ 1. LIMPEZA & BOOTSTRAP ]]
@@ -365,25 +364,23 @@ function CharacterModule.FlyToPortal(targetCFrame)
     SharedState.CurrentTween:Play()
 end
 
--- Acionador 100% Nativo de Botões (Não Move Cursor do Mouse)
+-- Acionador 100% Nativo de Eventos de Interface (Sem Input de Mouse Virtual)
 function CharacterModule.TriggerButton(btn)
     if not btn or not SharedState.IsRunning then return end
     pcall(function()
-        for _, evName in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
-            if btn[evName] and firesignal then firesignal(btn[evName]) end
-            if btn[evName] and getconnections then
-                for _, c in ipairs(getconnections(btn[evName])) do c:Fire() end
+        if firesignal then
+            if btn.Activated then firesignal(btn.Activated) end
+            if btn.MouseButton1Click then firesignal(btn.MouseButton1Click) end
+            if btn.MouseButton1Down then firesignal(btn.MouseButton1Down) end
+            if btn.MouseButton1Up then firesignal(btn.MouseButton1Up) end
+        end
+        if getconnections then
+            for _, evName in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
+                if btn[evName] then
+                    for _, c in ipairs(getconnections(btn[evName])) do c:Fire() end
+                end
             end
         end
-    end)
-end
-
-function CharacterModule.PressKey(keyCode)
-    if not SharedState.IsRunning then return end
-    pcall(function()
-        VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-        task.wait(0.02)
-        VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
     end)
 end
 
@@ -524,6 +521,7 @@ end
 -- [[ 7. MÓDULO DE COMBATE ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
+local skillRemote = ReplicatedStorage:WaitForChild("Remotes", 10):FindFirstChild("Skill") or ReplicatedStorage:WaitForChild("Remotes", 10):FindFirstChild("Spell")
 local lastSkillUse = 0
 local comboIndex = 1
 
@@ -594,18 +592,19 @@ function CombatModule.ExecuteSkills()
             local s2 = hotbarList:FindFirstChild("Spell2", true) or hotbarList:FindFirstChild("X", true)
             local s3 = hotbarList:FindFirstChild("Ultimate", true) or hotbarList:FindFirstChild("Spell3", true) or hotbarList:FindFirstChild("C", true)
 
-            if s1 then CharacterModule.TriggerButton(s1) else CharacterModule.PressKey(Enum.KeyCode.Z) end
-            task.wait(0.06)
-            if s2 then CharacterModule.TriggerButton(s2) else CharacterModule.PressKey(Enum.KeyCode.X) end
-            task.wait(0.06)
+            if s1 then CharacterModule.TriggerButton(s1) end
+            task.wait(0.04)
+            if s2 then CharacterModule.TriggerButton(s2) end
+            task.wait(0.04)
             if s3 then CharacterModule.TriggerButton(s3) end
-            CharacterModule.PressKey(Enum.KeyCode.C)
-        else
-            CharacterModule.PressKey(Enum.KeyCode.Z)
-            task.wait(0.06)
-            CharacterModule.PressKey(Enum.KeyCode.X)
-            task.wait(0.06)
-            CharacterModule.PressKey(Enum.KeyCode.C)
+        end
+
+        if skillRemote then
+            pcall(function()
+                skillRemote:FireServer(1)
+                skillRemote:FireServer(2)
+                skillRemote:FireServer(3)
+            end)
         end
     end
 end
@@ -1058,11 +1057,11 @@ function FlowModule.RunBossRush()
     end
 end
 
--- [[ 11. ESTADOS DA DUNGEON & AUTO-START ]]
+-- [[ 11. ESTADOS DA DUNGEON & AUTO-START LEVE ]]
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
-    if not pgui or (tick() - SharedState.LastStartAttempt) < 0.8 then return end
+    if not pgui or (tick() - SharedState.LastStartAttempt) < 1.0 then return end
     SharedState.LastStartAttempt = tick()
     
     local main = pgui:FindFirstChild("Main")
@@ -1071,8 +1070,7 @@ function DungeonStateModule.CheckStart()
     local targetFrames = {
         main:FindFirstChild("DungeonFrame"),
         main:FindFirstChild("BossRushFrame"),
-        main:FindFirstChild("RaidFrame"),
-        main:FindFirstChild("FrontFrame")
+        main:FindFirstChild("RaidFrame")
     }
 
     for _, frame in ipairs(targetFrames) do
@@ -1080,25 +1078,6 @@ function DungeonStateModule.CheckStart()
             local startBtn = frame:FindFirstChild("Start", true) or frame:FindFirstChild("Play", true)
             if startBtn and startBtn:IsA("GuiObject") and startBtn.Visible then
                 CharacterModule.TriggerButton(startBtn)
-                SharedState.IsVirusActive = false
-                SharedState.MatchStartTick = tick()
-                return
-            end
-        end
-    end
-
-    for _, btn in ipairs(main:GetDescendants()) do
-        if btn:IsA("GuiButton") and btn.Visible then
-            local bName = btn.Name:lower()
-            if bName == "start" or bName == "play" or bName == "startbutton" or bName == "playbutton" then
-                CharacterModule.TriggerButton(btn)
-                SharedState.IsVirusActive = false
-                SharedState.MatchStartTick = tick()
-                return
-            end
-            local label = btn:FindFirstChildOfClass("TextLabel")
-            if label and (label.Text:lower():find("start") or label.Text:lower():find("play") or label.Text:lower():find("iniciar") or label.Text:lower():find("jogar")) then
-                CharacterModule.TriggerButton(btn)
                 SharedState.IsVirusActive = false
                 SharedState.MatchStartTick = tick()
                 return
