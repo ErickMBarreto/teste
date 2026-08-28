@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO PLAY AGAIN NO BOSS RUSH AO MORRER)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (INCURSÃO MODULAR & ISOLADA)
 -- ====================================================================
 
 -- [[ 1. TRAVA GLOBAL SINGLETON ]]
@@ -70,7 +70,7 @@ local SharedState = {
 -- [[ 2. CONFIGURAÇÕES ]]
 local ConfigModule = {}
 ConfigModule.Settings = {
-    SelectedPhase = "Boss Rush",
+    SelectedPhase = "Incursão",
     PositionMode = "Nas Costas",
     CustomWeaponName = "VoidRods",
     AutoFarm = true,
@@ -322,6 +322,7 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     SharedState.CurrentTween:Play()
 end
 
+-- Posicionamento Contínuo para o Boss Rush
 function CharacterModule.FollowBehindLive(targetPart)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
     local _, root = CharacterModule.Get()
@@ -429,7 +430,8 @@ function TargetingModule.GetLivingEnemies(phase)
         gameFolder and gameFolder:FindFirstChild("Boss"),
         gameFolder and gameFolder:FindFirstChild("Virus"),
         gameFolder and gameFolder:FindFirstChild("SecretBoss"),
-        gameFolder and gameFolder:FindFirstChild("BossRush")
+        gameFolder and gameFolder:FindFirstChild("BossRush"),
+        gameFolder and gameFolder:FindFirstChild("Raids")
     }
 
     for _, container in ipairs(searchContainers) do
@@ -971,21 +973,24 @@ function FlowModule.RunOnePiece()
     end
 end
 
--- Rota Incursão
-function FlowModule.RunIncursion()
-    local _, enemyPart = TargetingModule.GetClosestEnemy("Incursão")
-    if enemyPart then
-        CharacterModule.FlyToEnemy(enemyPart)
-    else
-        CharacterModule.StopMovement()
-    end
-end
-
 -- Rota Boss Rush
 function FlowModule.RunBossRush()
     local _, enemyPart = TargetingModule.GetClosestEnemy("Boss Rush")
     if enemyPart and enemyPart.Parent then
         CharacterModule.FollowBehindLive(enemyPart)
+    else
+        CharacterModule.StopMovement()
+    end
+end
+
+-- Rota Incursão (12 Waves sem Portais - Persegue e Elimina Mobs / Boss)
+function FlowModule.RunIncursion()
+    local _, root = CharacterModule.Get()
+    if not root then return end
+
+    local _, enemyPart = TargetingModule.GetClosestEnemy("Incursão")
+    if enemyPart and enemyPart.Parent then
+        CharacterModule.FlyToEnemy(enemyPart, ConfigModule.Settings.PositionMode)
     else
         CharacterModule.StopMovement()
     end
@@ -1081,6 +1086,11 @@ local function onPlayerDiedHandler()
                 task.wait(0.5)
             end
         end)
+        return
+    end
+
+    -- SE ESTIVER NA INCURSÃO: APENAS ESPERA O RESPAWN DO JOGO NORMALMENTE
+    if ConfigModule.Settings.SelectedPhase == "Incursão" then
         return
     end
 
@@ -1214,10 +1224,10 @@ task.spawn(function()
                             FlowModule.RunOnePiece()
                         elseif ConfigModule.Settings.SelectedPhase == "Bleach (Fase 4)" then
                             FlowModule.RunBleach()
-                        elseif ConfigModule.Settings.SelectedPhase == "Incursão" then
-                            FlowModule.RunIncursion()
                         elseif ConfigModule.Settings.SelectedPhase == "Boss Rush" then
                             FlowModule.RunBossRush()
+                        elseif ConfigModule.Settings.SelectedPhase == "Incursão" then
+                            FlowModule.RunIncursion()
                         end
                     end
                 end
@@ -1333,13 +1343,13 @@ end)
 local PhaseSection = Tabs.Farm:AddSection("Configurações de Fase & Posição")
 PhaseSection:AddDropdown("PhaseSelector", {
     Title = "Selecionar Fase",
-    Values = { "One Piece", "Bleach (Fase 4)", "Incursão", "Boss Rush" },
+    Values = { "One Piece", "Bleach (Fase 4)", "Boss Rush", "Incursão" },
     Default = ConfigModule.Settings.SelectedPhase,
     Callback = function(Value) ConfigModule.Settings.SelectedPhase = Value ConfigModule.Save() end
 })
 
 PhaseSection:AddDropdown("PositionModeSelector", {
-    Title = "Modo de Posicionamento (Outras Fases)",
+    Title = "Modo de Posicionamento (Incursão & Outras)",
     Values = { "Nas Costas", "Em Cima da Cabeça", "Padrão (Anterior)" },
     Default = ConfigModule.Settings.PositionMode,
     Callback = function(Value) ConfigModule.Settings.PositionMode = Value ConfigModule.Save() end
@@ -1396,7 +1406,7 @@ CombatSection:AddSlider("TweenSpeed", {
 })
 CombatSection:AddToggle("HardcoreToggle", {
     Title = "Modo Hardcore",
-    Description = "Espera 23s após a morte e clica em Play Again (Outras Fases)",
+    Description = "Espera 23s após a morte e clica em Play Again (Bleach/One Piece)",
     Default = ConfigModule.Settings.HardcoreMode,
     Callback = function(Value) ConfigModule.Settings.HardcoreMode = Value ConfigModule.Save() end
 })
