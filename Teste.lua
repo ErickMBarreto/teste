@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (VERSÃO ESTÁVEL & TOTALMENTE ISOLADA)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (BOSS RUSH: ESQUIVA AOE + FLANK DE LINHA RETA)
 -- ====================================================================
 
 local CoreGui = game:GetService("CoreGui")
@@ -9,15 +9,24 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
--- [[ 1. SINGLETON SEGURO (IMPEDE DUPLICAÇÃO) ]]
+-- [[ 1. LIMPEZA & BOOTSTRAP ]]
 local UNIQUE_ID = "HubRapazes_Singleton_Tag"
-if CoreGui:FindFirstChild(UNIQUE_ID) then 
-    return 
-end
+local oldTag = CoreGui:FindFirstChild(UNIQUE_ID)
+if oldTag then pcall(function() oldTag:Destroy() end) end
 
 local singletonTag = Instance.new("Folder")
 singletonTag.Name = UNIQUE_ID
 pcall(function() singletonTag.Parent = CoreGui end)
+
+for _, gui in ipairs({CoreGui, Players.LocalPlayer and Players.LocalPlayer:FindFirstChild("PlayerGui")}) do
+    if gui then
+        for _, child in ipairs(gui:GetChildren()) do
+            if child.Name == "IBdihP_PersistentToggle" or child.Name:find("Fluent") then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
+end
 
 local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/teste/refs/heads/main/Teste.lua"
 local function queueNextExecution()
@@ -464,44 +473,60 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. ESQUIVA DE AOE (BOSS RUSH) ]]
+-- [[ 6. ESQUIVA DUPLA: AOE CIRCULAR + FLANK DE GOLPE RETO ]]
 local DodgeModule = {}
 
-function DodgeModule.GetActiveDangerAoE(enemyPart)
-    if not ConfigModule.Settings.AutoDodge then return nil, 0 end
+function DodgeModule.AnalyzeDanger(enemyPart)
+    if not ConfigModule.Settings.AutoDodge then return "None", nil, 0 end
     local _, root = CharacterModule.Get()
-    if not root or not enemyPart then return nil, 0 end
+    if not root or not enemyPart then return "None", nil, 0 end
 
+    -- Se já estamos nos esquivando de uma área ativa e ela ainda existe
     if SharedState.ActiveDangerPart and SharedState.ActiveDangerPart.Parent then
         local obj = SharedState.ActiveDangerPart
         local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
-        return obj, radius
+        return "CircleAoE", obj, radius
     end
 
     local debris = workspace:FindFirstChild("Debris")
-    if not debris then return nil, 0 end
+    if not debris then return "None", nil, 0 end
+
+    local foundLineAttack = false
 
     for _, obj in ipairs(debris:GetChildren()) do
         if obj:IsA("BasePart") and obj.Parent then
             local name = obj.Name:lower()
-            local isLineAttack = name:find("blockwarning") or name:find("linewarning") or name:find("beam")
-            local isCircleAoE = name:find("cylinderwarning") or name:find("floor") or name:find("circle") or name:find("aoe")
+
+            -- 1. GOLPE EM LINHA RETA / RETANGULAR FRONTAL
+            local isLine = name:find("blockwarning") or name:find("linewarning") or name:find("beam")
             
-            if isCircleAoE and not isLineAttack and not name:find("player") then
+            -- 2. GOLPE CIRCULAR EM ÁREA 360°
+            local isCircle = name:find("cylinderwarning") or name:find("floor") or name:find("circle") or name:find("aoe")
+
+            if isCircle and not isLine and not name:find("player") then
                 local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
                 radius = math.clamp(radius, 6, 60)
-                
                 local distToBoss = (obj.Position - enemyPart.Position).Magnitude
+                
                 if distToBoss < 85 then
                     SharedState.ActiveDangerPart = obj
-                    return obj, radius
+                    return "CircleAoE", obj, radius
+                end
+            elseif isLine and not name:find("player") then
+                local distToBoss = (obj.Position - enemyPart.Position).Magnitude
+                if distToBoss < 85 then
+                    foundLineAttack = true
                 end
             end
         end
     end
 
+    if foundLineAttack then
+        return "LineAttack", nil, 0
+    end
+
     SharedState.ActiveDangerPart = nil
-    return nil, 0
+    return "None", nil, 0
 end
 
 -- [[ 7. MÓDULO DE COMBATE ]]
@@ -999,7 +1024,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush
+-- Rota Boss Rush (AoE: Fuga Horizontal | Linha Reta: Cola nas Costas Imediatamente)
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1012,9 +1037,10 @@ function FlowModule.RunBossRush()
         return
     end
 
-    local dangerPart, radius = DodgeModule.GetActiveDangerAoE(enemyPart)
+    local dangerType, dangerPart, radius = DodgeModule.AnalyzeDanger(enemyPart)
     
-    if dangerPart and dangerPart.Parent then
+    if dangerType == "CircleAoE" and dangerPart and dangerPart.Parent then
+        -- 1. GOLPE CIRCULAR 360°: Esquiva horizontal para fora do raio
         SharedState.IsDodging = true
         
         local dangerPos = dangerPart.Position
@@ -1036,7 +1062,13 @@ function FlowModule.RunBossRush()
         local lookTarget = Vector3.new(enemyPart.Position.X, bossY, enemyPart.Position.Z)
 
         CharacterModule.FlyToPosition(safePos, lookTarget)
+    elseif dangerType == "LineAttack" then
+        -- 2. GOLPE EM LINHA RETA: Força posicionamento imediato nas costas do Boss (não para de bater)
+        SharedState.IsDodging = false
+        SharedState.ActiveDangerPart = nil
+        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
     else
+        -- 3. PADRÃO: Mantém posição nas costas do Boss
         SharedState.IsDodging = false
         SharedState.ActiveDangerPart = nil
         CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
@@ -1379,8 +1411,8 @@ PhaseSection:AddDropdown("PositionModeSelector", {
 
 local DodgeSection = Tabs.Farm:AddSection("Esquiva Automática (Boss Rush)")
 DodgeSection:AddToggle("AutoDodgeToggle", {
-    Title = "Ativar Auto-Dodge (AoE Circular)",
-    Description = "Ignora golpes retos e recua apenas em círculos de dano no chão",
+    Title = "Ativar Auto-Dodge Inteligente",
+    Description = "Recua em áreas 360° e mantém flanco nas costas em golpes retos",
     Default = ConfigModule.Settings.AutoDodge,
     Callback = function(Value) ConfigModule.Settings.AutoDodge = Value ConfigModule.Save() end
 })
