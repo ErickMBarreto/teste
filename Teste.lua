@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (ESQUIVA 100% HORIZONTAL NO PLANO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (BOSS RUSH DEDICADO & FASES INTACTAS)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -78,6 +78,8 @@ local SharedState = {
     HasExecutedQuests = false,
     HasSentWebhook = false,
     IsDodging = false,
+    DodgeUntil = 0,
+    LastDodgeSafePos = nil,
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
@@ -97,14 +99,14 @@ ConfigModule.Settings = {
     AutoPlayAgain = true,
     AutoEngage = true,
     AutoDodge = true,
-    DodgeDistance = 5,
+    DodgeDistance = 8,
     HardcoreMode = false,
     StartWaitTime = 2.0,
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
-    BackDistance = 5.0,
-    TweenSpeed = 52,
+    BackDistance = 4.5,
+    TweenSpeed = 55,
     AttackSpeed = 0.15,
     AutoClaimQuests = false,
     -- Configurações Auto-Sell & Auto-Favorite
@@ -306,8 +308,8 @@ function CharacterModule.GetSafeCFrame(targetPosition, lookAtPosition)
 
     if hit then
         local floorY = hit.Position.Y
-        if safeY < (floorY + 3.5) then
-            safeY = floorY + 3.5
+        if safeY < (floorY + 2.0) then
+            safeY = floorY + 2.0
         end
     end
 
@@ -332,11 +334,11 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     if mode == "Nas Costas" then
         local lookVec = targetPart.CFrame.LookVector
         if lookVec.Magnitude > 0.1 then
-            local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 2.5, 0)
+            local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 1.0, 0)
             local backPos = enemyPos + backOffset
             targetCFrame = CFrame.lookAt(backPos, enemyPos)
         else
-            targetCFrame = CFrame.lookAt(enemyPos + Vector3.new(0, 5, 5), enemyPos)
+            targetCFrame = CFrame.lookAt(enemyPos + Vector3.new(0, 1.0, 4.5), enemyPos)
         end
     elseif mode == "Em Cima da Cabeça" then
         local abovePos = enemyPos + Vector3.new(0, ConfigModule.Settings.HeightAboveEnemy, 0.1)
@@ -349,14 +351,14 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     local targetPos = targetCFrame.Position
     local distance = (root.Position - targetPos).Magnitude
 
-    if distance <= 1.2 then return end
+    if distance <= 1.0 then return end
 
-    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.8 and SharedState.CurrentTween then
+    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.5 and SharedState.CurrentTween then
         return
     end
 
     SharedState.CurrentTargetPos = targetPos
-    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.08, 3.5)
+    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.06, 2.5)
 
     if SharedState.CurrentTween then 
         SharedState.CurrentTween:Cancel() 
@@ -380,7 +382,7 @@ function CharacterModule.FlyToPosition(targetPos, lookAtPos)
 
     SharedState.CurrentTargetPos = targetPos
     local targetCFrame = CFrame.lookAt(targetPos, lookAtPos or (targetPos + Vector3.new(0, 0, -1)))
-    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.06, 1.5)
+    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.05, 1.2)
 
     if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
     SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
@@ -520,7 +522,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. MÓDULO DE ESQUIVA INTELIGENTE ]]
+-- [[ 6. MÓDULO DE ESQUIVA INTELIGENTE COM TRAVA ]]
 local DodgeModule = {}
 
 function DodgeModule.CheckActiveWarnings(enemyPart)
@@ -531,17 +533,24 @@ function DodgeModule.CheckActiveWarnings(enemyPart)
     local debris = workspace:FindFirstChild("Debris")
     if not debris then return false, nil, 0 end
 
+    if SharedState.IsDodging and tick() < SharedState.DodgeUntil and SharedState.LastDodgeSafePos then
+        return true, SharedState.LastDodgeSafePos, 0
+    end
+
     for _, obj in ipairs(debris:GetChildren()) do
         if obj:IsA("BasePart") and obj.Parent then
             local name = obj.Name:lower()
-            if name:find("blockwarning") or name:find("cylinderwarning") or (name:find("warning") and not name:find("player")) then
+            local isWarning = name:find("warning") or name:find("floor") or name:find("indicator") or name:find("aoe") or name:find("m1hitbox") or name:find("damage")
+            
+            if isWarning and not name:find("player") then
                 local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
-                radius = math.clamp(radius, 6, 45)
+                radius = math.clamp(radius, 6, 60)
                 
                 local distToBoss = (obj.Position - enemyPart.Position).Magnitude
                 local distToPlayer = (root.Position - obj.Position).Magnitude
 
-                if distToBoss < 70 and distToPlayer <= (radius + 2.0) then
+                if distToBoss < 85 and distToPlayer <= (radius + 4.0) then
+                    SharedState.DodgeUntil = tick() + 1.2
                     return true, obj.Position, radius
                 end
             end
@@ -1065,7 +1074,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush com Esquiva 100% Horizontal no Plano X/Z
+-- Rota Boss Rush (Controle Dedicado de Posicionamento & Esquiva)
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1081,27 +1090,33 @@ function FlowModule.RunBossRush()
     if inDanger and dangerPos then
         SharedState.IsDodging = true
 
-        -- Calcula o vetor de fuga exclusivamente no plano horizontal (X e Z)
-        local diffX = root.Position.X - dangerPos.X
-        local diffZ = root.Position.Z - dangerPos.Z
-        local horizontalDiff = Vector3.new(diffX, 0, diffZ)
-        local escapeDir
+        -- Calcula a saída horizontal mais curta
+        if radius > 0 then
+            local diffX = root.Position.X - dangerPos.X
+            local diffZ = root.Position.Z - dangerPos.Z
+            local horizontalDiff = Vector3.new(diffX, 0, diffZ)
+            local escapeDir
 
-        if horizontalDiff.Magnitude > 0.1 then
-            escapeDir = horizontalDiff.Unit
-        else
-            local lookVec = enemyPart.CFrame.LookVector
-            escapeDir = Vector3.new(-lookVec.X, 0, -lookVec.Z).Unit
+            if horizontalDiff.Magnitude > 0.1 then
+                escapeDir = horizontalDiff.Unit
+            else
+                local lookVec = enemyPart.CFrame.LookVector
+                escapeDir = Vector3.new(-lookVec.X, 0, -lookVec.Z).Unit
+            end
+
+            local safeDist = radius + ConfigModule.Settings.DodgeDistance + 3.0
+            local bossY = enemyPart.Position.Y + 1.0
+            SharedState.LastDodgeSafePos = Vector3.new(dangerPos.X + (escapeDir.X * safeDist), bossY, dangerPos.Z + (escapeDir.Z * safeDist))
         end
 
-        local safeDist = radius + ConfigModule.Settings.DodgeDistance + 2.0
-        -- Trava a altura Y exatamente na mesma altura atual do personagem
-        local safePos = Vector3.new(dangerPos.X + (escapeDir.X * safeDist), root.Position.Y, dangerPos.Z + (escapeDir.Z * safeDist))
-        local lookTarget = Vector3.new(enemyPart.Position.X, root.Position.Y, enemyPart.Position.Z)
-
-        CharacterModule.FlyToPosition(safePos, lookTarget)
+        if SharedState.LastDodgeSafePos then
+            local lookTarget = Vector3.new(enemyPart.Position.X, SharedState.LastDodgeSafePos.Y, enemyPart.Position.Z)
+            CharacterModule.FlyToPosition(SharedState.LastDodgeSafePos, lookTarget)
+        end
     else
+        -- Volta direto para as costas sem passar pelo dropdown geral
         SharedState.IsDodging = false
+        SharedState.LastDodgeSafePos = nil
         CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
     end
 end
@@ -1417,16 +1432,16 @@ PhaseSection:AddDropdown("PhaseSelector", {
 })
 
 PhaseSection:AddDropdown("PositionModeSelector", {
-    Title = "Modo de Posicionamento",
+    Title = "Modo de Posicionamento (Outras Fases)",
     Values = { "Nas Costas", "Em Cima da Cabeça", "Padrão (Anterior)" },
     Default = ConfigModule.Settings.PositionMode,
     Callback = function(Value) ConfigModule.Settings.PositionMode = Value ConfigModule.Save() end
 })
 
-local DodgeSection = Tabs.Farm:AddSection("Esquiva Automática (Auto-Dodge)")
+local DodgeSection = Tabs.Farm:AddSection("Esquiva Automática (Boss Rush)")
 DodgeSection:AddToggle("AutoDodgeToggle", {
-    Title = "Ativar Auto-Dodge (Boss Rush)",
-    Description = "Recua horizontalmente no mesmo plano quando o Boss soltar golpes em área",
+    Title = "Ativar Auto-Dodge",
+    Description = "Recua horizontalmente no mesmo plano ao detectar avisos em Debris",
     Default = ConfigModule.Settings.AutoDodge,
     Callback = function(Value) ConfigModule.Settings.AutoDodge = Value ConfigModule.Save() end
 })
@@ -1471,7 +1486,7 @@ CombatSection:AddToggle("AutoFarmToggle", {
 CombatSection:AddSlider("HeightAboveEnemy", {
     Title = "Altura Vertical (Y)",
     Default = ConfigModule.Settings.HeightAboveEnemy,
-    Min = 2, Max = 18, Rounding = 1,
+    Min = 1, Max = 18, Rounding = 1,
     Callback = function(Value) ConfigModule.Settings.HeightAboveEnemy = Value ConfigModule.Save() end
 })
 CombatSection:AddSlider("BackDistance", {
