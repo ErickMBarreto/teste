@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (MOUSE 100% LIVRE & AUTO-START LEVE)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (TARGETING & MOVIMENTAÇÃO DESTRAVADA)
 -- ====================================================================
 
 local CoreGui = game:GetService("CoreGui")
@@ -62,6 +62,7 @@ local SharedState = {
     HasExecutedQuests = false,
     HasSentWebhook = false,
     IsDodging = false,
+    HasStartedMatch = false,
     ActiveDangerPart = nil,
     LastRoomState = "Room1",
     CurrentTween = nil,
@@ -86,7 +87,7 @@ ConfigModule.Settings = {
     AutoDodge = true,
     DodgeDistance = 6,
     HardcoreMode = false,
-    StartWaitTime = 3.0,
+    StartWaitTime = 2.0,
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
@@ -255,15 +256,13 @@ end
 
 flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
-        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
-            local _, root, hum = CharacterModule.Get()
-            if root and hum and hum.Health > 0 then
-                if not SharedState.CurrentTween then
-                    root.AssemblyLinearVelocity = Vector3.new(0, 0.05, 0)
-                    root.AssemblyAngularVelocity = Vector3.zero
-                else
-                    root.AssemblyAngularVelocity = Vector3.zero
-                end
+        local _, root, hum = CharacterModule.Get()
+        if root and hum and hum.Health > 0 then
+            if not SharedState.CurrentTween then
+                root.AssemblyLinearVelocity = Vector3.new(0, 0.05, 0)
+                root.AssemblyAngularVelocity = Vector3.zero
+            else
+                root.AssemblyAngularVelocity = Vector3.zero
             end
         end
     end
@@ -364,7 +363,6 @@ function CharacterModule.FlyToPortal(targetCFrame)
     SharedState.CurrentTween:Play()
 end
 
--- Acionador 100% Nativo de Eventos de Interface (Sem Input de Mouse Virtual)
 function CharacterModule.TriggerButton(btn)
     if not btn or not SharedState.IsRunning then return end
     pcall(function()
@@ -391,7 +389,7 @@ function TargetingModule.IsAlive(obj)
     if not obj or not obj.Parent then return false end
     local hum = obj:FindFirstChildOfClass("Humanoid")
     if hum then return (hum.Health > 0 and hum:GetState() ~= Enum.HumanoidStateType.Dead) end
-    local hpAttr = obj:GetAttribute("Health") or obj:GetAttribute("HP")
+    local hpAttr = obj:GetAttribute("Health") or obj:GetAttribute("HP") or obj:GetAttribute("CurrentHealth")
     if hpAttr then return tonumber(hpAttr) > 0 end
     local hpVal = obj:FindFirstChild("Health") or obj:FindFirstChild("HP")
     if hpVal and hpVal:IsA("ValueBase") then return tonumber(hpVal.Value) > 0 end
@@ -447,7 +445,9 @@ function TargetingModule.GetLivingEnemies(phase)
     if #list == 0 and gameFolder then
         for _, desc in ipairs(gameFolder:GetDescendants()) do
             if desc:IsA("Model") and desc ~= char and not Players:GetPlayerFromCharacter(desc) then
-                addEntity(desc)
+                if desc.Name ~= "Clothing" and not desc:FindFirstAncestor("Players") then
+                    addEntity(desc)
+                end
             end
         end
     end
@@ -1057,7 +1057,7 @@ function FlowModule.RunBossRush()
     end
 end
 
--- [[ 11. ESTADOS DA DUNGEON & AUTO-START LEVE ]]
+-- [[ 11. ESTADOS DA DUNGEON & AUTO-START ]]
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
@@ -1079,7 +1079,10 @@ function DungeonStateModule.CheckStart()
             if startBtn and startBtn:IsA("GuiObject") and startBtn.Visible then
                 CharacterModule.TriggerButton(startBtn)
                 SharedState.IsVirusActive = false
-                SharedState.MatchStartTick = tick()
+                if not SharedState.HasStartedMatch then
+                    SharedState.HasStartedMatch = true
+                    SharedState.MatchStartTick = tick()
+                end
                 return
             end
         end
@@ -1164,6 +1167,7 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     SharedState.IsTransitioning = false
     SharedState.EnteringPortal = false
     SharedState.IsDodging = false
+    SharedState.HasStartedMatch = false
     SharedState.ActiveDangerPart = nil
     SharedState.HasSentWebhook = false
     SharedState.LastRoomState = "Room1"
@@ -1179,7 +1183,7 @@ local initialRoutinesScheduled = false
 -- Loop 1: Ataque M1
 task.spawn(function()
     while SharedState.IsRunning do
-        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
+        if not SharedState.HasStartedMatch or (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
             if ConfigModule.Settings.AutoAttack and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
                 local _, _, hum = CharacterModule.Get()
                 if hum and hum.Health > 0 then CombatModule.ExecuteM1() end
@@ -1192,7 +1196,7 @@ end)
 -- Loop 2: Skills
 task.spawn(function()
     while SharedState.IsRunning do
-        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
+        if not SharedState.HasStartedMatch or (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
             if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal and not SharedState.IsDodging then
                 local _, _, hum = CharacterModule.Get()
                 if hum and hum.Health > 0 then CombatModule.ExecuteSkills() end
@@ -1263,7 +1267,7 @@ task.spawn(function()
                         SharedState.IsVirusActive = true
                         task.wait(1.0)
                     else
-                        if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
+                        if not SharedState.HasStartedMatch or (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
                             if ConfigModule.Settings.SelectedPhase == "One Piece" then
                                 FlowModule.RunOnePiece()
                             elseif ConfigModule.Settings.SelectedPhase == "Bleach (Fase 4)" then
