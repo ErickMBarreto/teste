@@ -1,6 +1,14 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (FIX COSTAS REAL & ESQUIVA AOE)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (SINGLETON GLOBAL & AUTO-DODGE 100%)
 -- ====================================================================
+
+-- [[ 1. TRAVA GLOBAL DEFINITIVA ]]
+if getgenv and getgenv().HubDosRapazes_Loaded then
+    return
+end
+if getgenv then
+    getgenv().HubDosRapazes_Loaded = true
+end
 
 local CoreGui = game:GetService("CoreGui")
 local Players = game:GetService("Players")
@@ -9,22 +17,13 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
--- [[ 1. SINGLETON SEGURO ]]
-local UNIQUE_ID = "HubRapazes_Singleton_Tag"
-if CoreGui:FindFirstChild(UNIQUE_ID) then 
-    return 
-end
-
-local singletonTag = Instance.new("Folder")
-singletonTag.Name = UNIQUE_ID
-pcall(function() singletonTag.Parent = CoreGui end)
-
 local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/teste/refs/heads/main/Teste.lua"
 local function queueNextExecution()
     local queueFunc = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport
     if queueFunc then
         pcall(function()
             queueFunc(string.format([[
+                if getgenv then getgenv().HubDosRapazes_Loaded = nil end
                 repeat task.wait(0.5) until game:IsLoaded() and game.Players.LocalPlayer
                 task.wait(1.5)
                 loadstring(game:HttpGet("%s"))()
@@ -36,6 +35,16 @@ end
 if not game:IsLoaded() then game.Loaded:Wait() end
 local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 local pgui = player:WaitForChild("PlayerGui", 20)
+
+for _, gui in ipairs({CoreGui, pgui}) do
+    if gui then
+        for _, child in ipairs(gui:GetChildren()) do
+            if child.Name == "IBdihP_PersistentToggle" or child.Name:find("Fluent") then
+                pcall(function() child:Destroy() end)
+            end
+        end
+    end
+end
 
 local Fluent = loadstring(game:HttpGet("https://github.com/dawid-scripts/Fluent/releases/latest/download/main.lua"))()
 
@@ -287,7 +296,6 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     local targetCFrame
 
     if mode == "Nas Costas" then
-        -- Utiliza o LookVector do modelo principal para calcular as costas reais
         local lookVec = targetPart.CFrame.LookVector
         local backOffset = -lookVec * ConfigModule.Settings.BackDistance + Vector3.new(0, 0.8, 0)
         targetCFrame = CFrame.lookAt(enemyPos + backOffset, enemyPos)
@@ -461,7 +469,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. ANALISADOR DE GOLPES & ESQUIVA ]]
+-- [[ 6. ANALISADOR DE GOLPES & AUTO-DODGE ROBUSTO ]]
 local DodgeModule = {}
 
 function DodgeModule.AnalyzeDanger(enemyPart)
@@ -469,6 +477,7 @@ function DodgeModule.AnalyzeDanger(enemyPart)
     local _, root = CharacterModule.Get()
     if not root or not enemyPart then return "None", nil, 0 end
 
+    -- Mantém a fuga enquanto a peça atual ainda estiver ativa
     if SharedState.ActiveDangerPart and SharedState.ActiveDangerPart.Parent then
         local obj = SharedState.ActiveDangerPart
         local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
@@ -478,34 +487,30 @@ function DodgeModule.AnalyzeDanger(enemyPart)
     local debris = workspace:FindFirstChild("Debris")
     if not debris then return "None", nil, 0 end
 
-    local foundLineAttack = false
+    local foundLine = false
 
     for _, obj in ipairs(debris:GetChildren()) do
         if obj:IsA("BasePart") and obj.Parent then
             local name = obj.Name:lower()
+            local distToBoss = (obj.Position - enemyPart.Position).Magnitude
 
-            local isLine = name:find("blockwarning") or name:find("linewarning") or name:find("beam")
-            local isCircle = name:find("cylinderwarning") or name:find("floor") or name:find("circle") or name:find("aoe")
+            if distToBoss < 85 then
+                local isLine = name:find("block") or name:find("line") or name:find("beam") or name:find("rect")
+                local isCircle = name:find("cylinder") or name:find("circle") or name:find("aoe") or name:find("floor") or name:find("warn") or (obj.Shape == Enum.PartType.Cylinder)
 
-            if isCircle and not isLine and not name:find("player") then
-                local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
-                radius = math.clamp(radius, 6, 60)
-                local distToBoss = (obj.Position - enemyPart.Position).Magnitude
-                
-                if distToBoss < 85 then
+                if isCircle and not isLine and not name:find("player") then
+                    local radius = math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2
+                    radius = math.clamp(radius, 6, 60)
                     SharedState.ActiveDangerPart = obj
                     return "CircleAoE", obj, radius
-                end
-            elseif isLine and not name:find("player") then
-                local distToBoss = (obj.Position - enemyPart.Position).Magnitude
-                if distToBoss < 85 then
-                    foundLineAttack = true
+                elseif isLine and not name:find("player") then
+                    foundLine = true
                 end
             end
         end
     end
 
-    if foundLineAttack then
+    if foundLine then
         return "LineAttack", nil, 0
     end
 
@@ -1008,7 +1013,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush (Esquiva AoE no chão + Costas garantidas)
+-- Rota Boss Rush
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1024,7 +1029,6 @@ function FlowModule.RunBossRush()
     local dangerType, dangerPart, radius = DodgeModule.AnalyzeDanger(enemyPart)
     
     if dangerType == "CircleAoE" and dangerPart and dangerPart.Parent then
-        -- 1. AOE CIRCULAR NO CHÃO: Recua no plano horizontal para fora da área
         SharedState.IsDodging = true
         
         local dangerPos = dangerPart.Position
@@ -1047,7 +1051,6 @@ function FlowModule.RunBossRush()
 
         CharacterModule.FlyToPosition(safePos, lookTarget)
     else
-        -- 2. GOLPE RETO OU POSICIONAMENTO PADRÃO: Cola nas costas do Boss e ataca
         SharedState.IsDodging = false
         SharedState.ActiveDangerPart = nil
         CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
@@ -1335,6 +1338,7 @@ floatBtn.MouseButton1Click:Connect(function() toggleUI(true) end)
 
 function UIModule.Shutdown()
     SharedState.IsRunning = false
+    if getgenv then getgenv().HubDosRapazes_Loaded = nil end
     CharacterModule.StopMovement()
     if charConnection then charConnection:Disconnect() end
     if diedConnection then diedConnection:Disconnect() end
