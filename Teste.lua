@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (M1 DESTRAVADO & FLUXO ISOLADO)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (FOCO 100% NAS COSTAS DO BOSS)
 -- ====================================================================
 
 -- [[ 1. TRAVA GLOBAL SINGLETON ]]
@@ -60,8 +60,6 @@ local SharedState = {
     HasExecutedSell = false,
     HasExecutedQuests = false,
     HasSentWebhook = false,
-    IsDodging = false,
-    ActiveDangerPart = nil,
     LastRoomState = "Room1",
     CurrentTween = nil,
     CurrentTargetPos = nil,
@@ -81,8 +79,6 @@ ConfigModule.Settings = {
     AutoStart = true,
     AutoPlayAgain = true,
     AutoEngage = true,
-    AutoDodge = true,
-    DodgeDistance = 7,
     HardcoreMode = false,
     StartWaitTime = 2.0,
     SkillCooldown = 0.8,
@@ -286,7 +282,7 @@ function CharacterModule.GetSafeCFrame(targetPosition, lookAtPosition)
     return CFrame.new(safePos, lookAtPosition)
 end
 
-function CharacterModule.FlyToEnemy(targetPart, overrideMode, forceInstant)
+function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
     local _, root = CharacterModule.Get()
     if not root or not targetPart or not targetPart.Parent then return end
@@ -312,35 +308,14 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode, forceInstant)
     local targetPos = targetCFrame.Position
     local distance = (root.Position - targetPos).Magnitude
 
-    if not forceInstant and distance <= 0.8 then return end
+    if distance <= 0.8 then return end
 
-    if not forceInstant and SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.0 and SharedState.CurrentTween then
+    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 1.0 and SharedState.CurrentTween then
         return
     end
 
     SharedState.CurrentTargetPos = targetPos
     local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.04, 2.0)
-
-    if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
-    SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
-    SharedState.CurrentTween:Play()
-end
-
-function CharacterModule.FlyToPosition(targetPos, lookAtPos)
-    if SharedState.IsDungeonEnded or SharedState.IsRespawning or not SharedState.IsRunning then return end
-    local _, root = CharacterModule.Get()
-    if not root then return end
-
-    local distance = (root.Position - targetPos).Magnitude
-    if distance <= 0.6 then return end
-
-    if SharedState.CurrentTargetPos and (SharedState.CurrentTargetPos - targetPos).Magnitude < 0.8 and SharedState.CurrentTween then
-        return
-    end
-
-    SharedState.CurrentTargetPos = targetPos
-    local targetCFrame = CFrame.lookAt(targetPos, lookAtPos or (targetPos + Vector3.new(0, 0, -1)))
-    local duration = math.clamp(distance / math.max(ConfigModule.Settings.TweenSpeed, 10), 0.04, 1.2)
 
     if SharedState.CurrentTween then SharedState.CurrentTween:Cancel() end
     SharedState.CurrentTween = TweenService:Create(root, TweenInfo.new(duration, Enum.EasingStyle.Sine, Enum.EasingDirection.Out), {CFrame = targetCFrame})
@@ -474,63 +449,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. ANALISADOR DE GOLPES ]]
-local DodgeModule = {}
-
-function DodgeModule.AnalyzeDanger(enemyPart)
-    if not ConfigModule.Settings.AutoDodge then return "None", nil, 0 end
-    local _, root = CharacterModule.Get()
-    if not root or not enemyPart then return "None", nil, 0 end
-
-    local debris = workspace:FindFirstChild("Debris")
-    if not debris then
-        SharedState.ActiveDangerPart = nil
-        return "None", nil, 0
-    end
-
-    local foundCircleAoE = nil
-    local circleRadius = 0
-    local foundLineAttack = false
-
-    for _, obj in ipairs(debris:GetChildren()) do
-        if obj:IsA("BasePart") and obj.Parent then
-            local name = obj.Name:lower()
-            local distToBoss = (obj.Position - enemyPart.Position).Magnitude
-
-            if distToBoss < 85 and not name:find("player") then
-                local isLine = name:find("block") or name:find("line") or name:find("beam") or name:find("rect")
-                local isCircle = name:find("cylinder") or name:find("circle") or name:find("aoe") or name:find("floor") or name:find("warn") or (obj.Shape == Enum.PartType.Cylinder)
-
-                if isLine then
-                    foundLineAttack = true
-                elseif isCircle then
-                    foundCircleAoE = obj
-                    circleRadius = math.clamp(math.max(obj.Size.X, obj.Size.Y, obj.Size.Z) / 2, 6, 60)
-                end
-            end
-        end
-    end
-
-    if foundCircleAoE and foundLineAttack then
-        SharedState.ActiveDangerPart = nil
-        return "MultipleAttacks", nil, 0
-    end
-
-    if foundLineAttack then
-        SharedState.ActiveDangerPart = nil
-        return "LineAttack", nil, 0
-    end
-
-    if foundCircleAoE then
-        SharedState.ActiveDangerPart = foundCircleAoE
-        return "CircleAoE", foundCircleAoE, circleRadius
-    end
-
-    SharedState.ActiveDangerPart = nil
-    return "None", nil, 0
-end
-
--- [[ 7. MÓDULO DE COMBATE TOTALMENTE DESTRAVADO ]]
+-- [[ 6. MÓDULO DE COMBATE ]]
 local CombatModule = {}
 local attackRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Attack", 10)
 local skillRemote = ReplicatedStorage:WaitForChild("Remotes", 10):FindFirstChild("Skill") or ReplicatedStorage:WaitForChild("Remotes", 10):FindFirstChild("Spell")
@@ -588,12 +507,10 @@ function CombatModule.ExecuteM1()
     comboIndex = (comboIndex % 4) + 1
     local weapon = CombatModule.GetEffectiveWeapon()
     
-    -- Disparo no Remote do Servidor
     if attackRemote then 
         pcall(function() attackRemote:FireServer("M1", weapon, comboIndex, 0, 0, 2) end) 
     end
 
-    -- Ativação direta da Tool na mão
     local char = player.Character
     if char then
         local tool = char:FindFirstChildOfClass("Tool")
@@ -632,7 +549,7 @@ function CombatModule.ExecuteSkills()
     end
 end
 
--- [[ 8. AUTO-SELL & AUTO-FAVORITE ]]
+-- [[ 7. AUTO-SELL & AUTO-FAVORITE ]]
 local AutoSellModule = {}
 local equipRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Equip", 10)
 local lastSellTick = 0
@@ -764,7 +681,7 @@ function AutoSellModule.Execute()
     SharedState.IsSelling = false
 end
 
--- [[ 9. MÓDULO DE MISSÕES ]]
+-- [[ 8. MÓDULO DE MISSÕES ]]
 local QuestModule = {}
 local questRemote = ReplicatedStorage:WaitForChild("Remotes", 10):WaitForChild("Quest", 10)
 
@@ -823,7 +740,7 @@ function QuestModule.ClaimAll()
     SharedState.IsClaiming = false
 end
 
--- [[ 10. FLUXO DE FASES & ROTAS ]]
+-- [[ 9. FLUXO DE FASES & ROTAS ]]
 local FlowModule = {}
 
 local BLEACH_PORTAL_1 = CFrame.new(4557.2, -305.5, 1925.0)
@@ -1036,58 +953,17 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush
+-- Rota Boss Rush (FICA 100% CRAVADO NAS COSTAS)
 function FlowModule.RunBossRush()
-    local _, root = CharacterModule.Get()
-    if not root then return end
-
     local _, enemyPart = TargetingModule.GetClosestEnemy("Boss Rush")
-    if not enemyPart then
-        SharedState.IsDodging = false
-        SharedState.ActiveDangerPart = nil
-        CharacterModule.StopMovement()
-        return
-    end
-
-    local dangerType, dangerPart, radius = DodgeModule.AnalyzeDanger(enemyPart)
-    
-    if dangerType == "CircleAoE" and dangerPart and dangerPart.Parent then
-        -- 1. APENAS GOLPE CIRCULAR 360°: Recua horizontalmente
-        SharedState.IsDodging = true
-        
-        local dangerPos = dangerPart.Position
-        local diffX = root.Position.X - dangerPos.X
-        local diffZ = root.Position.Z - dangerPos.Z
-        local horizontalDiff = Vector3.new(diffX, 0, diffZ)
-        local escapeDir
-
-        if horizontalDiff.Magnitude > 0.1 then
-            escapeDir = horizontalDiff.Unit
-        else
-            local lookVec = enemyPart.CFrame.LookVector
-            escapeDir = Vector3.new(-lookVec.X, 0, -lookVec.Z).Unit
-        end
-
-        local safeDist = radius + ConfigModule.Settings.DodgeDistance + 2.0
-        local bossY = enemyPart.Position.Y + 0.8
-        local safePos = Vector3.new(dangerPos.X + (escapeDir.X * safeDist), bossY, dangerPos.Z + (escapeDir.Z * safeDist))
-        local lookTarget = Vector3.new(enemyPart.Position.X, bossY, enemyPart.Position.Z)
-
-        CharacterModule.FlyToPosition(safePos, lookTarget)
-    elseif dangerType == "LineAttack" or dangerType == "MultipleAttacks" then
-        -- 2. GOLPE EM LINHA RETA OU MISTO: Força corte instantâneo direto para as costas do Boss
-        SharedState.IsDodging = false
-        SharedState.ActiveDangerPart = nil
-        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas", true)
+    if enemyPart then
+        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
     else
-        -- 3. PADRÃO: Mantém posição nas costas do Boss
-        SharedState.IsDodging = false
-        SharedState.ActiveDangerPart = nil
-        CharacterModule.FlyToEnemy(enemyPart, "Nas Costas", false)
+        CharacterModule.StopMovement()
     end
 end
 
--- [[ 11. ESTADOS DA DUNGEON & AUTO-START ]]
+-- [[ 10. ESTADOS DA DUNGEON & AUTO-START ]]
 local DungeonStateModule = {}
 
 function DungeonStateModule.CheckStart()
@@ -1158,8 +1034,6 @@ local function onPlayerDiedHandler()
     CharacterModule.StopMovement()
     SharedState.EnteringPortal = false
     SharedState.IsTransitioning = false
-    SharedState.IsDodging = false
-    SharedState.ActiveDangerPart = nil
     SharedState.LastRoomState = "Room1"
 
     if not ConfigModule.Settings.HardcoreMode then return end
@@ -1192,8 +1066,6 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     SharedState.IsRespawning = true
     SharedState.IsTransitioning = false
     SharedState.EnteringPortal = false
-    SharedState.IsDodging = false
-    SharedState.ActiveDangerPart = nil
     SharedState.HasSentWebhook = false
     SharedState.LastRoomState = "Room1"
     CharacterModule.StopMovement()
@@ -1201,7 +1073,7 @@ charConnection = player.CharacterAdded:Connect(function(newChar)
     task.delay(0.8, function() SharedState.IsRespawning = false end)
 end)
 
--- [[ 12. LOOPS PRINCIPAIS INDEPENDENTES ]]
+-- [[ 11. LOOPS PRINCIPAIS INDEPENDENTES ]]
 local initialRoutinesScheduled = false
 
 -- Loop 1: Ataque M1 (100% Contínuo)
@@ -1217,7 +1089,7 @@ task.spawn(function()
     end
 end)
 
--- Loop 2: Skills
+-- Loop 2: Skills (100% Contínuo)
 task.spawn(function()
     while SharedState.IsRunning do
         if ConfigModule.Settings.AutoSkills and not SharedState.IsDungeonEnded and not SharedState.IsRespawning and not SharedState.IsTransitioning and not SharedState.EnteringPortal then
@@ -1267,8 +1139,6 @@ task.spawn(function()
                 if ended and playAgainBtn then
                     SharedState.IsDungeonEnded = true
                     SharedState.IsVirusActive = false
-                    SharedState.IsDodging = false
-                    SharedState.ActiveDangerPart = nil
                     CharacterModule.StopMovement()
 
                     pcall(WebhookModule.ProcessDungeonDrops)
@@ -1312,7 +1182,7 @@ task.spawn(function()
     end
 end)
 
--- [[ 13. INTERFACE VISUAL FLUENT ]]
+-- [[ 12. INTERFACE VISUAL FLUENT ]]
 local UIModule = {}
 
 local Window = Fluent:CreateWindow({
@@ -1424,20 +1294,6 @@ PhaseSection:AddDropdown("PositionModeSelector", {
     Values = { "Nas Costas", "Em Cima da Cabeça", "Padrão (Anterior)" },
     Default = ConfigModule.Settings.PositionMode,
     Callback = function(Value) ConfigModule.Settings.PositionMode = Value ConfigModule.Save() end
-})
-
-local DodgeSection = Tabs.Farm:AddSection("Esquiva Automática (Boss Rush)")
-DodgeSection:AddToggle("AutoDodgeToggle", {
-    Title = "Ativar Auto-Dodge Inteligente",
-    Description = "Recua em áreas 360° e mantém flanco nas costas em golpes retos ou múltiplos",
-    Default = ConfigModule.Settings.AutoDodge,
-    Callback = function(Value) ConfigModule.Settings.AutoDodge = Value ConfigModule.Save() end
-})
-DodgeSection:AddSlider("DodgeDistSlider", {
-    Title = "Margem de Segurança Adicional (Studs)",
-    Default = ConfigModule.Settings.DodgeDistance,
-    Min = 2, Max = 20, Rounding = 0,
-    Callback = function(Value) ConfigModule.Settings.DodgeDistance = Value ConfigModule.Save() end
 })
 
 local WeaponSection = Tabs.Farm:AddSection("Configuração de Arma")
