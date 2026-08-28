@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (DELAY INICIAL DE 3S ESTÁVEL)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (CLIQUE FÍSICO REAL & AUTO-START)
 -- ====================================================================
 
 local CoreGui = game:GetService("CoreGui")
@@ -9,6 +9,7 @@ local TweenService = game:GetService("TweenService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local RunService = game:GetService("RunService")
+local GuiService = game:GetService("GuiService")
 
 -- [[ 1. LIMPEZA & BOOTSTRAP ]]
 local UNIQUE_ID = "HubRapazes_Singleton_Tag"
@@ -68,7 +69,7 @@ local SharedState = {
     CurrentTween = nil,
     CurrentTargetPos = nil,
     LastPortalAttempt = 0,
-    MatchStartTick = tick() -- Marca o tempo da partida
+    MatchStartTick = tick()
 }
 
 -- [[ 2. CONFIGURAÇÕES ]]
@@ -86,7 +87,7 @@ ConfigModule.Settings = {
     AutoDodge = true,
     DodgeDistance = 6,
     HardcoreMode = false,
-    StartWaitTime = 3.0, -- Espera de 3 segundos configurada
+    StartWaitTime = 3.0,
     SkillCooldown = 0.8,
     SkillMaxDistance = 22,
     HeightAboveEnemy = 8.5,
@@ -255,7 +256,6 @@ end
 
 flightStabilizer = RunService.Stepped:Connect(function()
     if SharedState.IsRunning and ConfigModule.Settings.AutoFarm and not SharedState.IsRespawning and not SharedState.EnteringPortal and not SharedState.IsTransitioning then
-        -- Só flutua se já passou o tempo de espera inicial
         if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
             local _, root, hum = CharacterModule.Get()
             if root and hum and hum.Health > 0 then
@@ -365,14 +365,27 @@ function CharacterModule.FlyToPortal(targetCFrame)
     SharedState.CurrentTween:Play()
 end
 
+-- Acionador Universal de Botões de UI (Simulação Física + Sinais de Script)
 function CharacterModule.TriggerButton(btn)
     if not btn or not SharedState.IsRunning then return end
     pcall(function()
+        -- 1. Disparo direto por sinal do motor
         for _, evName in ipairs({"Activated", "MouseButton1Click", "MouseButton1Down", "MouseButton1Up"}) do
             if btn[evName] and firesignal then firesignal(btn[evName]) end
             if btn[evName] and getconnections then
                 for _, c in ipairs(getconnections(btn[evName])) do c:Fire() end
             end
+        end
+
+        -- 2. Disparo de clique físico via VirtualInputManager na posição absoluta do botão
+        if btn:IsA("GuiObject") and btn.Visible then
+            local pos = btn.AbsolutePosition
+            local size = btn.AbsoluteSize
+            local centerX = pos.X + (size.X / 2)
+            local centerY = pos.Y + (size.Y / 2) + 36 -- Offset comum de TopBar
+            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, true, game, 1)
+            task.wait(0.03)
+            VirtualInputManager:SendMouseButtonEvent(centerX, centerY, 0, false, game, 1)
         end
     end)
 end
@@ -1064,23 +1077,44 @@ function DungeonStateModule.CheckStart()
     if not pgui then return end
     
     local main = pgui:FindFirstChild("Main")
-    if main then
-        for _, btn in ipairs(main:GetDescendants()) do
-            if btn:IsA("GuiButton") and btn.Visible then
-                local bName = btn.Name:lower()
-                if bName == "start" or bName == "play" or bName == "startbutton" or bName == "playbutton" then
-                    CharacterModule.TriggerButton(btn)
-                    SharedState.IsVirusActive = false
-                    SharedState.MatchStartTick = tick()
-                    return
-                end
-                local label = btn:FindFirstChildOfClass("TextLabel")
-                if label and (label.Text:lower():find("start") or label.Text:lower():find("play") or label.Text:lower():find("iniciar") or label.Text:lower():find("jogar")) then
-                    CharacterModule.TriggerButton(btn)
-                    SharedState.IsVirusActive = false
-                    SharedState.MatchStartTick = tick()
-                    return
-                end
+    if not main then return end
+
+    -- 1. Procura frames dedicados de inicialização
+    local targetFrames = {
+        main:FindFirstChild("DungeonFrame"),
+        main:FindFirstChild("BossRushFrame"),
+        main:FindFirstChild("RaidFrame"),
+        main:FindFirstChild("FrontFrame")
+    }
+
+    for _, frame in ipairs(targetFrames) do
+        if frame and frame.Visible then
+            local startBtn = frame:FindFirstChild("Start", true) or frame:FindFirstChild("Play", true)
+            if startBtn and startBtn:IsA("GuiObject") and startBtn.Visible then
+                CharacterModule.TriggerButton(startBtn)
+                SharedState.IsVirusActive = false
+                SharedState.MatchStartTick = tick()
+                return
+            end
+        end
+    end
+
+    -- 2. Varredura recursiva de contingência em botões visíveis
+    for _, btn in ipairs(main:GetDescendants()) do
+        if btn:IsA("GuiButton") and btn.Visible then
+            local bName = btn.Name:lower()
+            if bName == "start" or bName == "play" or bName == "startbutton" or bName == "playbutton" then
+                CharacterModule.TriggerButton(btn)
+                SharedState.IsVirusActive = false
+                SharedState.MatchStartTick = tick()
+                return
+            end
+            local label = btn:FindFirstChildOfClass("TextLabel")
+            if label and (label.Text:lower():find("start") or label.Text:lower():find("play") or label.Text:lower():find("iniciar") or label.Text:lower():find("jogar")) then
+                CharacterModule.TriggerButton(btn)
+                SharedState.IsVirusActive = false
+                SharedState.MatchStartTick = tick()
+                return
             end
         end
     end
@@ -1202,7 +1236,7 @@ task.spawn(function()
     end
 end)
 
--- Loop 3: Farm & Movimento
+-- Loop 3: Farm, Movimento e Estados
 task.spawn(function()
     while SharedState.IsRunning do
         if ConfigModule.Settings.AutoStart then DungeonStateModule.CheckStart() end
@@ -1263,7 +1297,6 @@ task.spawn(function()
                         SharedState.IsVirusActive = true
                         task.wait(1.0)
                     else
-                        -- Espera os 3 segundos antes de iniciar os voos e rotas
                         if (tick() - SharedState.MatchStartTick) >= ConfigModule.Settings.StartWaitTime then
                             if ConfigModule.Settings.SelectedPhase == "One Piece" then
                                 FlowModule.RunOnePiece()
