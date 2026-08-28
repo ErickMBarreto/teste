@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (BOSS RUSH: ESQUIVA PRECISA E CURTA)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (ESQUIVA 100% HORIZONTAL NO PLANO)
 -- ====================================================================
 
 -- [[ 1. SINGLETON & BOOTSTRAP ]]
@@ -520,7 +520,7 @@ function TargetingModule.GetClosestEnemy(phase)
     return closestEnemy, closestPart
 end
 
--- [[ 6. MÓDULO DE ESQUIVA INTELIGENTE (SHORTEST PATH ESCAPE) ]]
+-- [[ 6. MÓDULO DE ESQUIVA INTELIGENTE ]]
 local DodgeModule = {}
 
 function DodgeModule.CheckActiveWarnings(enemyPart)
@@ -541,7 +541,6 @@ function DodgeModule.CheckActiveWarnings(enemyPart)
                 local distToBoss = (obj.Position - enemyPart.Position).Magnitude
                 local distToPlayer = (root.Position - obj.Position).Magnitude
 
-                -- Se a área estiver ativa e o player estiver dentro da zona de dano
                 if distToBoss < 70 and distToPlayer <= (radius + 2.0) then
                     return true, obj.Position, radius
                 end
@@ -1066,7 +1065,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush com Esquiva pelo Caminho Mais Curto
+-- Rota Boss Rush com Esquiva 100% Horizontal no Plano X/Z
 function FlowModule.RunBossRush()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1082,22 +1081,25 @@ function FlowModule.RunBossRush()
     if inDanger and dangerPos then
         SharedState.IsDodging = true
 
-        -- Calcula a direção de fuga radial (ponto mais próximo da borda)
-        local diff = root.Position - dangerPos
-        local horizontalDiff = Vector3.new(diff.X, 0, diff.Z)
+        -- Calcula o vetor de fuga exclusivamente no plano horizontal (X e Z)
+        local diffX = root.Position.X - dangerPos.X
+        local diffZ = root.Position.Z - dangerPos.Z
+        local horizontalDiff = Vector3.new(diffX, 0, diffZ)
         local escapeDir
 
         if horizontalDiff.Magnitude > 0.1 then
             escapeDir = horizontalDiff.Unit
         else
-            -- Se estiver exatamente no centro, recua contra o olhar do Boss
-            escapeDir = -enemyPart.CFrame.LookVector
+            local lookVec = enemyPart.CFrame.LookVector
+            escapeDir = Vector3.new(-lookVec.X, 0, -lookVec.Z).Unit
         end
 
-        local safeDist = radius + ConfigModule.Settings.DodgeDistance + 3.0
-        local safePos = dangerPos + Vector3.new(escapeDir.X * safeDist, 2.5, escapeDir.Z * safeDist)
+        local safeDist = radius + ConfigModule.Settings.DodgeDistance + 2.0
+        -- Trava a altura Y exatamente na mesma altura atual do personagem
+        local safePos = Vector3.new(dangerPos.X + (escapeDir.X * safeDist), root.Position.Y, dangerPos.Z + (escapeDir.Z * safeDist))
+        local lookTarget = Vector3.new(enemyPart.Position.X, root.Position.Y, enemyPart.Position.Z)
 
-        CharacterModule.FlyToPosition(safePos, enemyPart.Position)
+        CharacterModule.FlyToPosition(safePos, lookTarget)
     else
         SharedState.IsDodging = false
         CharacterModule.FlyToEnemy(enemyPart, "Nas Costas")
@@ -1424,7 +1426,7 @@ PhaseSection:AddDropdown("PositionModeSelector", {
 local DodgeSection = Tabs.Farm:AddSection("Esquiva Automática (Auto-Dodge)")
 DodgeSection:AddToggle("AutoDodgeToggle", {
     Title = "Ativar Auto-Dodge (Boss Rush)",
-    Description = "Recua pelo caminho mais curto quando o Boss soltar áreas de dano",
+    Description = "Recua horizontalmente no mesmo plano quando o Boss soltar golpes em área",
     Default = ConfigModule.Settings.AutoDodge,
     Callback = function(Value) ConfigModule.Settings.AutoDodge = Value ConfigModule.Save() end
 })
