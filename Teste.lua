@@ -1,5 +1,5 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (ORBITAL ATIVO NAS COSTAS DO BOSS)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (AUTO PLAY AGAIN NO BOSS RUSH AO MORRER)
 -- ====================================================================
 
 -- [[ 1. TRAVA GLOBAL SINGLETON ]]
@@ -322,7 +322,6 @@ function CharacterModule.FlyToEnemy(targetPart, overrideMode)
     SharedState.CurrentTween:Play()
 end
 
--- Posicionamento e Órbita Contínua Exclusivo para Boss Rush
 function CharacterModule.FollowBehindLive(targetPart)
     if SharedState.IsDungeonEnded or SharedState.IsRespawning or SharedState.IsTransitioning or SharedState.EnteringPortal or not SharedState.IsRunning then return end
     local _, root = CharacterModule.Get()
@@ -982,7 +981,7 @@ function FlowModule.RunIncursion()
     end
 end
 
--- Rota Boss Rush (SEMPRE CRAVADO ATRÁS DO BOSS MESMO QUANDO ELE GIRA)
+-- Rota Boss Rush
 function FlowModule.RunBossRush()
     local _, enemyPart = TargetingModule.GetClosestEnemy("Boss Rush")
     if enemyPart and enemyPart.Parent then
@@ -1065,6 +1064,27 @@ local function onPlayerDiedHandler()
     SharedState.IsTransitioning = false
     SharedState.LastRoomState = "Room1"
 
+    -- SE ESTIVER NO BOSS RUSH: CLICA EM PLAY AGAIN IMEDIATAMENTE APÓS A MORTE
+    if ConfigModule.Settings.SelectedPhase == "Boss Rush" and ConfigModule.Settings.AutoPlayAgain then
+        task.spawn(function()
+            task.wait(1.5)
+            for _ = 1, 15 do
+                if not SharedState.IsRunning then break end
+                local ended, retryBtn = DungeonStateModule.CheckEnd()
+                if ended and retryBtn then
+                    SharedState.IsDungeonEnded = true
+                    queueNextExecution()
+                    task.wait(0.2)
+                    CharacterModule.TriggerButton(retryBtn)
+                    break
+                end
+                task.wait(0.5)
+            end
+        end)
+        return
+    end
+
+    -- MODO HARDCORE DAS OUTRAS FASES
     if not ConfigModule.Settings.HardcoreMode then return end
     task.spawn(function()
         task.wait(23)
@@ -1376,7 +1396,7 @@ CombatSection:AddSlider("TweenSpeed", {
 })
 CombatSection:AddToggle("HardcoreToggle", {
     Title = "Modo Hardcore",
-    Description = "Espera 23s após a morte e clica em Play Again",
+    Description = "Espera 23s após a morte e clica em Play Again (Outras Fases)",
     Default = ConfigModule.Settings.HardcoreMode,
     Callback = function(Value) ConfigModule.Settings.HardcoreMode = Value ConfigModule.Save() end
 })
