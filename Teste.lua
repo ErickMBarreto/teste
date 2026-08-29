@@ -1,8 +1,8 @@
 -- ====================================================================
--- HUB DOS RAPAZES - ANIME DUNGEONS (DETECÇÃO DE MONSTROS RESTAURADA)
+-- HUB DOS RAPAZES - ANIME DUNGEONS (CACHE LOCAL ANTI-RATE LIMIT & ESTABILIDADE)
 -- ====================================================================
 
--- [[ 1. TRAVA GLOBAL SINGLETON ]]
+-- [[ 1. TRAVA GLOBAL SINGLETON & CACHE LOCAL ]]
 if getgenv and getgenv().HubDosRapazes_Loaded then
     return
 end
@@ -18,6 +18,18 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local scriptURL = "https://raw.githubusercontent.com/ErickMBarreto/teste/refs/heads/main/Teste.lua"
+local SCRIPT_NAME = "HubRapazes_Local.lua"
+
+-- Salva/atualiza o script localmente no armazenamento do executor
+pcall(function()
+    if writefile then
+        local rawCode = game:HttpGet(scriptURL)
+        if rawCode and #rawCode > 500 then
+            writefile(SCRIPT_NAME, rawCode)
+        end
+    end
+end)
+
 local function queueNextExecution()
     local queueFunc = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport) or queueonteleport
     if queueFunc then
@@ -26,8 +38,14 @@ local function queueNextExecution()
                 if getgenv then getgenv().HubDosRapazes_Loaded = nil end
                 repeat task.wait(0.5) until game:IsLoaded() and game.Players.LocalPlayer
                 task.wait(2.5)
-                loadstring(game:HttpGet("%s"))()
-            ]], scriptURL))
+                
+                -- Tenta carregar do arquivo local para evitar erro de limite do GitHub
+                if readfile and isfile and isfile("%s") then
+                    loadstring(readfile("%s"))()
+                else
+                    loadstring(game:HttpGet("%s"))()
+                end
+            ]], SCRIPT_NAME, SCRIPT_NAME, scriptURL))
         end)
     end
 end
@@ -421,7 +439,7 @@ function CharacterModule.TriggerButton(btn)
     end)
 end
 
--- [[ 5. DETECÇÃO DE INIMIGOS (RESTAURADA E SEM FILTRO DE TRANSPARÊNCIA) ]]
+-- [[ 5. DETECÇÃO DE INIMIGOS ]]
 local TargetingModule = {}
 
 function TargetingModule.IsAlive(obj)
@@ -979,7 +997,7 @@ function FlowModule.RunBleach()
     end
 end
 
--- Rota One Piece (Totalmente Isolada)
+-- Rota One Piece
 function FlowModule.RunOnePiece()
     local _, root = CharacterModule.Get()
     if not root then return end
@@ -1089,7 +1107,7 @@ function DungeonStateModule.CheckStart()
                 CharacterModule.TriggerButton(startBtn)
                 SharedState.IsVirusActive = false
                 SharedState.HasClickedStart = true
-                SharedState.MatchStartTick = tick() -- Inicia contagem do slider na hora do clique
+                SharedState.MatchStartTick = tick()
                 return
             end
         end
